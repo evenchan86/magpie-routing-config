@@ -3,8 +3,12 @@
 
 用法: render.py <template.json> <mapping.json> [output.json]
 mapping: {role: [model, ...]}（有序，主模型在前；元素为 base 引用 provider/model，
-可含 #account 通道，不含 :effort）。模板成员 `<role:X>:effort` 展开为该角色所有模型
-各带 :effort（多模型故障转移/池）；classifier `<role:intent/judge>` 取列表首元素。
+可含 #account 通道，不含 :effort；可用 model@effort 覆写该模型的强度，组合写法
+provider/model#account@effort）。仅当最后一个 @ 后恰为合法 effort 才视为覆写，否则
+整串按 base 引用（模型 id / 账号名本身可含 @，如 gpt-4o@2024-08-06、#user@example.com）。模板成员
+`<role:X>:effort` 展开为该角色所有模型——带 @effort 的模型用覆写强度，其余用槽位
+:effort（多模型故障转移/池，可同组混强度）；classifier `<role:intent/judge>` 取列表
+首元素的 base 引用（裸 provider/model，不带强度）。
 规则 use/more 在模板里是 group/<id>，不展开。组内成员精确去重（保序，避免角色列表重叠产生重复成员）。
 渲染产物交 validate.py 校验。
 """
@@ -25,6 +29,27 @@ def has_effort_suffix(ref):
         core = core[:-5]
     _, sep, suffix = core.rpartition(":")
     return bool(sep and suffix and all(p in EFFORT_SUFFIXES for p in suffix.split("+")))
+
+
+def split_override(entry):
+    """拆成 (base_ref, effort_override)。仅在【最后一个 @ 之后恰为合法 effort（支持 + 多级）】
+    时视为覆写；否则整串按 base 引用处理——因为 magpie 的模型 id 与账号名本身可含 @
+    （实测：acme/gpt-4o@2024-08-06 可入组落盘；#user@example.com 被解析为账号名）。
+    写错强度（如 model@hig）不会被当成覆写而静默改义，而是留作模型名，交给 validate 的
+    unknown-model 检查兜底。"""
+    base, at, override = entry.rpartition("@")
+    if at and override and all(p in EFFORT_SUFFIXES for p in override.split("+")):
+        return base, override
+    return entry, None
+
+
+def apply_effort(base_ref, effort_suffix):
+    """把 :effort 后缀施加到 base_ref，正确放在 #account 之前。
+    magpie member 语法是 model:effort#account，不是 model#acc:effort。"""
+    if not effort_suffix:
+        return base_ref
+    core, hash_sep, account = base_ref.partition("#")
+    return core + effort_suffix + (hash_sep + account if hash_sep else "")
 
 
 def main():
@@ -49,9 +74,12 @@ def main():
         elif not all(isinstance(m, str) and m for m in models):
             errors.append(f"mapping[{role!r}]: every element must be a non-empty model string")
         else:
-            for m in models:
-                if has_effort_suffix(m):
-                    errors.append(f"mapping[{role!r}]: {m!r} 含强度后缀；mapping 元素须为 base 引用 provider/model（强度由模板成员后缀施加）")
+            for entry in models:
+                base, _ = split_override(entry)
+                if not base:
+                    errors.append(f"mapping[{role!r}]: {entry!r} 模型名为空；mapping 元素须为 base 引用 provider/model（可加 @effort 覆写）")
+                elif has_effort_suffix(base):
+                    errors.append(f"mapping[{role!r}]: {entry!r} 的模型部分含强度后缀；mapping 元素须为 base 引用（强度由模板后缀或 @effort 覆写施加）")
     # 预校验失败先返回，避免展开阶段对非法元素崩溃（干净 FAIL 契约）
     if errors:
         print("FAIL:")
@@ -71,7 +99,12 @@ def main():
         if not m:
             return [member]
         role, suffix = m.group(1), m.group(2)
-        return [model + suffix for model in models_for(role)]
+        out = []
+        for entry in models_for(role):
+            base, override = split_override(entry)
+            eff = ":" + override if override else suffix
+            out.append(apply_effort(base, eff))
+        return out
 
     groups = tpl.get("groups", [])
     if not isinstance(groups, list):
@@ -84,10 +117,11 @@ def main():
         if isinstance(cls, str):
             m = ROLE_RE.fullmatch(cls)
             if m:
-                role, suffix = m.group(1), m.group(2)
-                ms = models_for(role)
+                ms = models_for(m.group(1))
                 if ms:
-                    group["classifier"] = ms[0] + suffix
+                    # classifier 恒为裸 provider/model：剥 @effort 覆写，不加任何强度后缀
+                    base, _ = split_override(ms[0])
+                    group["classifier"] = base
         members = group.get("members")
         if isinstance(members, list):
             new, seen = [], set()

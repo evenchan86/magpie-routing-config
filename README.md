@@ -35,7 +35,7 @@ The classifier is a **separate role**: it only judges intent and is **never** a 
 
 ## Model roles
 
-Strategies aren't bound to specific models. Six capability roles are mapped to **ordered lists of your own models** (primary first; multiple models give failover or quota pools). `scripts/render.py` expands each template member `<role:X>:effort` into every model in that role's list, each carrying the same effort:
+Strategies aren't bound to specific models. Six capability roles are mapped to **ordered lists of your own models** (primary first; multiple models give failover or quota pools). `scripts/render.py` expands each template member `<role:X>:effort` into every model in that role's list. Effort defaults to the slot's, and a model can override it by writing `model@effort` in the mapping (combine as `provider/model#account@effort`) — so one subgroup can mix efforts (mapping `acme/vision@high` under a `:medium` slot renders `acme/vision:high` beside `acme/code:medium`):
 
 | Role | Purpose |
 |---|---|

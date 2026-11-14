@@ -2,7 +2,7 @@
   "intent/judge": ["acme/judge"],
   "reasoning/strong": ["acme/strong-reasoner", "acme/reasoner-backup"],
   "code/general": ["acme/code-standard", "acme/code-backup"],
-  "design/ui": ["acme/vision-designer"],
+  "design/ui": ["acme/vision-designer@high"],
   "fast/cheap": ["acme/lite-chat"],
   "context/long": ["acme/long-reader"]
 }

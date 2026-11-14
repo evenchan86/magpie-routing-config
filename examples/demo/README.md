@@ -14,8 +14,8 @@
 
 - 主路由 `auto`：`classifier=acme/judge`（取 `intent/judge` 列表首元素）只做意图判断，规则 `use=group/g-xxx` 分发到子组；无命中按成员顺序兜底到第一位 `group/g-code`。
 - 8 个任务子组：成员是「模型:强度」（如 `acme/code-standard:high`），各带 `routing`（`order` 故障转移 / `usage` 额度分摊）。**子组内多模型**由映射列表长度决定——例如 `code/general=[acme/code-standard, acme/code-backup]`、`fast/cheap=[acme/lite-chat]`，模板 `g-code` 的 `[<role:code/general>:high, <role:fast/cheap>:medium]` 展开为 `[acme/code-standard:high, acme/code-backup:high, acme/lite-chat:medium]`（三模型有序链）。
-- 同一角色槽的强度施加到该角色所有模型（uniform-per-slot）；需逐模型不同强度时渲染后手动微调。
-- `acme/judge` 只出现在 `auto.classifier`，**绝不**进任何组的成员/规则目标/兜底。
+- 同一角色槽的强度默认施加到该角色所有模型；单个模型可用 `@effort` 覆写。demo 的 `design/ui=["acme/vision-designer@high"]` 演示了这点：g-ui 槽位是 `:medium`，但 `acme/vision-designer` 覆写为 `:high`，于是 g-ui = `[vision-designer:high, code-standard:medium, code-backup:medium]`（同组混强度）。
+- `acme/judge` 只出现在 `auto.classifier`（裸引用，不带强度），**绝不**进任何组的成员/规则目标/兜底。
 
 ## 复现
 

@@ -120,7 +120,7 @@
       "name": "前端设计",
       "routing": "order",
       "members": [
-        "acme/vision-designer:medium",
+        "acme/vision-designer:high",
         "acme/code-standard:medium",
         "acme/code-backup:medium"
       ]

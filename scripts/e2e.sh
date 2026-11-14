@@ -334,13 +334,15 @@ ok "pause rule (use + pause:true) accepted"
 
 # 32. 仓库密钥扫描（全量逐字节、多编码，无文件豁免）
 python3 -I <<'PY'
-import re
+import re, subprocess
 from pathlib import Path
 root = Path.cwd()
 real = re.compile(
     r"sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}"
     r"|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}"
     r"|AIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+tracked = set(subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=root).stdout.splitlines())
+assert tracked, "git ls-files empty; cannot verify FAKE- placement"
 for f in root.rglob("*"):
     if not f.is_file() or ".git" in f.parts:
         continue
@@ -354,8 +356,10 @@ for f in root.rglob("*"):
             pass
     text = "\n".join(cands)
     assert not real.search(text), f"real secret pattern in {rel}"
-    if "FAKE-" in text:
-        assert rel.startswith("scripts/") or "docs/superpowers/" in rel or rel.startswith("examples/demo/") or (rel.startswith("tasks/e2e-") and rel.endswith(".log")), f"FAKE- leaked into {rel}"
+    # 合成故障注入标记 FAKE- 只允许出现在公开的 scripts/ 与 examples/demo/；
+    # 未 tracked 的本地文件不发布，不限位置，但同样接受上面的真实密钥扫描。
+    if "FAKE-" in text and rel in tracked:
+        assert rel.startswith("scripts/") or rel.startswith("examples/demo/"), f"FAKE- leaked into {rel}"
 print("repo secret scan clean")
 PY
 ok "secret scan passed"
@@ -529,5 +533,86 @@ python3 -I scripts/render.py templates/groups.template.json "$TMP/bare-map.json"
 python3 -I scripts/validate.py "$TMP/bare-rendered.json" "$TMP/bare-known.json" >/dev/null
 if python3 -I scripts/validate.py "$TMP/bare-rendered.json" "$TMP/bare-known-raw.json" >/dev/null 2>&1; then echo "FAIL: bare-name known accepted (should need prefix)"; exit 1; fi
 ok "real bare-name format: prefixed known PASS, raw known FAIL (colon name preserved)"
+
+# 43. 正例：@effort 覆写生效 + #account 顺序（model:effort#account）+ classifier 剥 override 为裸模型
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"rendered.json").read_text())["groups"]}
+# demo design/ui 用 @high 覆写 g-ui 槽位 :medium → 同组混强度
+assert g["g-ui"]["members"][0] == "acme/vision-designer:high", g["g-ui"]["members"]
+assert g["g-ui"]["members"][1] == "acme/code-standard:medium", g["g-ui"]["members"]
+PY
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = ["acme/code-standard#acc2@max", "acme/code-backup"]
+m["intent/judge"] = ["acme/judge@max"]
+(tmp/"override-map.json").write_text(json.dumps(m))
+PY
+python3 -I scripts/render.py templates/groups.template.json "$TMP/override-map.json" "$TMP/override-out.json" >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"override-out.json").read_text())["groups"]}
+assert g["g-test"]["members"][0] == "acme/code-standard:max#acc2", g["g-test"]["members"]  # 强度在 #account 前
+assert g["auto"]["classifier"] == "acme/judge", g["auto"]["classifier"]  # classifier 剥 @max，裸模型
+PY
+python3 -I scripts/validate.py "$TMP/override-out.json" "$TMP/known.json" >/dev/null
+ok "@effort override + #account order (model:effort#account) + classifier strips override"
+
+# 44. 正例：@ 兼容真实模型/账号名（含 @ 不当覆写）+ 多级覆写 @low+high + 同模型两强度保留（不得按 base 去重）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = ["acme/gpt-4o@2024-08-06", "acme/code-standard#user@example.com", "acme/code-standard@low+high"]
+(tmp/"at-map.json").write_text(json.dumps(m))
+known = json.loads((tmp/"known.json").read_text()) + ["acme/gpt-4o@2024-08-06"]
+(tmp/"at-known.json").write_text(json.dumps(known))
+PY
+python3 -I scripts/render.py templates/groups.template.json "$TMP/at-map.json" "$TMP/at-out.json" >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"at-out.json").read_text())["groups"]}
+mem = g["g-test"]["members"]
+# 含 @ 模型名不当覆写（槽位 :high）；账号含 @ 不当覆写且强度在 # 前；@low+high 多级覆写
+assert mem == ["acme/gpt-4o@2024-08-06:high", "acme/code-standard:high#user@example.com", "acme/code-standard:low+high"], mem
+PY
+python3 -I scripts/validate.py "$TMP/at-out.json" "$TMP/at-known.json" >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = ["acme/code-standard@low", "acme/code-standard@high"]
+(tmp/"two-effort-map.json").write_text(json.dumps(m))
+PY
+python3 -I scripts/render.py templates/groups.template.json "$TMP/two-effort-map.json" "$TMP/two-effort-out.json" >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"two-effort-out.json").read_text())["groups"]}
+assert g["g-test"]["members"] == ["acme/code-standard:low", "acme/code-standard:high"], g["g-test"]["members"]
+PY
+ok "@ compat (model/account names with @) + multi-level override + same-model two efforts kept"
+
+# 45. 反向：空模型名（@max 无 base）必须干净 FAIL（明确诊断，不崩溃）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = ["@max"]
+(tmp/"bad-map.json").write_text(json.dumps(m))
+PY
+OUT="$(python3 -I scripts/render.py templates/groups.template.json "$TMP/bad-map.json" "$TMP/bad-out.json" 2>&1)" && { echo "FAIL: empty base accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: crashed: $OUT"; exit 1; fi
+if ! grep -q "模型名为空" <<< "$OUT"; then echo "FAIL: missing diagnostic: $OUT"; exit 1; fi
+ok "render rejects empty model base (clean FAIL)"
 
 echo "E2E PASS: ${CHECKS} checks"

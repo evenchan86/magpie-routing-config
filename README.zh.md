@@ -35,7 +35,7 @@ classifier 是**独立角色**：只做意图判断，**绝不**作为路由成�
 
 ## 模型角色
 
-策略不绑定具体模型，而是定义 6 个能力角色，由你映射到**自己模型的有序列表**（主模型在前，多个模型构成故障转移或额度池）。`scripts/render.py` 把模板成员 `<role:X>:强度` 展开为该角色列表里的每个模型各带同一强度：
+策略不绑定具体模型，而是定义 6 个能力角色，由你映射到**自己模型的有序列表**（主模型在前，多个模型构成故障转移或额度池）。`scripts/render.py` 把模板成员 `<role:X>:强度` 展开为该角色列表里的每个模型。强度默认用槽位的，单个模型可在 mapping 里写 `model@effort` 覆写（组合写法 `provider/model#account@effort`）——因此同一子组可混强度（`:medium` 槽位下 mapping 写 `acme/vision@high`，渲染出 `acme/vision:high` 与 `acme/code:medium` 并列）：
 
 | 角色 | 用途 |
 |---|---|

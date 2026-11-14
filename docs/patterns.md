@@ -134,6 +134,29 @@
 
 **取舍**：classifier 与 fast/cheap 是两个角色——fast/cheap 是正常路由成员（轻量任务 + 兜底），classifier 不答请求。把判断模型塞进路由成员会浪费额度并污染兜底。
 
+## 复现配方：手写配置 → 模板（角色槽 + 字面量 + @effort 混合）
+
+已有一份合意的手写配置，想让它能被模板复现/再生成？三种手段混合，不必全靠角色抽象：
+
+| 手段 | 适用 | 写法 |
+|---|---|---|
+| 角色槽 | 通用部分、多模型展开 | 模板成员 `<role:X>:effort`，mapping 填有序列表 |
+| `@effort` 覆写 | 同组内某模型要不同强度 | mapping 元素 `model@effort`（覆写槽位强度）；带通道写 `provider/model#account@effort`（强度渲染在 `#account` 前）。模型/账号名含 `@` 不会被误当覆写——仅最后一个 `@` 后恰为合法强度才算 |
+| 字面量成员 | 逐组差异化选型（如审查组刻意换模型家族） | 模板 members 里直接写 `provider/model:effort`——render.py 对非 `<role:>` 成员**原样透传** |
+
+**要点**：角色→列表是全局映射（同一角色在所有组展开相同），表达不了「审查组用 A 家族、编码组用 B 家族」这类逐组选型——那部分用字面量写死。逐模型强度用 `@effort`，不必渲染后手改。
+
+```jsonc
+// 模板片段（虚构 acme）：通用部分用角色槽，审查组差异化选型用字面量
+{
+  "id": "g-ui",
+  "routing": "order",
+  "members": ["<role:design/ui>:medium", "<role:code/general>:medium"]
+  // design/ui = ["acme/vision-designer@high"] → vision-designer 覆写为 :high
+  // 结果：[vision-designer:high, code-standard:medium, code-backup:medium]（同组混强度）
+}
+```
+
 ## 通用模式（旧 7 个，按官方口径校正）
 
 ### 6. 意图分层路由（单层变体）

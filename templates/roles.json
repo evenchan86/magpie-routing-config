@@ -1,5 +1,5 @@
 {
-  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。mapping 值是【有序模型列表】（主模型在前，可多个做故障转移/池）；元素为 base 引用 provider/model（可含 #account 通道，不含 :effort，强度由模板成员后缀施加）。渲染时模板成员 <role:X>:effort 展开为该角色所有模型各带 :effort（scripts/render.py，组内重叠模型精确去重保序）。intent/judge 是意图判断专用角色——只填 group.classifier（取列表首元素），绝不进路由成员/规则目标/兜底，与 fast/cheap 路由角色分离。",
+  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。mapping 值是【有序模型列表】（主模型在前，可多个做故障转移/池）；元素为 base 引用 provider/model（可含 #account 通道，不含 :effort），可用 model@effort 覆写该模型强度（effort ∈ none/minimal/low/medium/high/xhigh/max，支持 + 多级如 @low+high），组合写法 provider/model#account@effort。仅当最后一个 @ 后恰为合法强度才算覆写，否则整串按 base 引用（模型 id/账号名本身可含 @，如 gpt-4o@2024-08-06、#user@example.com）。渲染时模板成员 <role:X>:effort 展开为该角色所有模型——带 @effort 的用覆写强度，其余用槽位 :effort（scripts/render.py，强度插在 #account 前，组内重叠模型精确去重保序）。intent/judge 是意图判断专用角色——只填 group.classifier（取列表首元素的裸引用，不带强度），绝不进路由成员/规则目标/兜底，与 fast/cheap 路由角色分离。",
   "roles": {
     "intent/judge": {
       "purpose": "意图判断（classifier 专用）：每回合判断请求意图，不回答请求",

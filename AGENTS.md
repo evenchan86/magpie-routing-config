@@ -39,14 +39,14 @@
    "
    ```
 
-3. **映射**：按 `templates/roles.json` 的启发式给出「角色 → 本机模型」建议（6 角色，含独立的 `intent/judge`），**必须经使用者确认**后填入 mapping。mapping 值是**有序模型列表**（主模型在前，可多个做故障转移/池；元素为 base 引用 `provider/model`，可含 `#account` 通道，不含 `:effort`）。不要替使用者拍板模型选择。`intent/judge` 选一个小而快、不带推理的模型（列表首元素作 classifier），且不得与任何路由角色复用同一模型。
-4. **渲染**：用 `scripts/render.py` 把确认的 mapping 展开进 `templates/groups.template.json`——模板成员 `<role:xxx>:强度` 展开为该角色**所有模型各带该强度**（多模型子组），`classifier` 取 `intent/judge` 列表首元素，产出两层路由层草案（主路由 `auto` + 8 子组）：
+3. **映射**：按 `templates/roles.json` 的启发式给出「角色 → 本机模型」建议（6 角色，含独立的 `intent/judge`），**必须经使用者确认**后填入 mapping。mapping 值是**有序模型列表**（主模型在前，可多个做故障转移/池；元素为 base 引用 `provider/model`，可含 `#account` 通道，不含 `:effort`；可用 `model@effort` 覆写该模型强度，组合写法 `provider/model#account@effort`）。`@` 仅在最后一个 `@` 后恰为合法强度（支持 `+` 多级，如 `@low+high`）时才算覆写，否则整串按 base 引用——**模型 id / 账号名本身可含 `@`**（如 `gpt-4o@2024-08-06`、`#user@example.com`），不会被误伤。不要替使用者拍板模型选择。`intent/judge` 选一个小而快、不带推理的模型（列表首元素作 classifier，裸引用不带强度），且不得与任何路由角色复用同一模型。
+4. **渲染**：用 `scripts/render.py` 把确认的 mapping 展开进 `templates/groups.template.json`——模板成员 `<role:xxx>:强度` 展开为该角色**所有模型**：带 `@effort` 的用覆写强度、其余用槽位强度（多模型子组，可同组混强度；强度插在 `#account` 前），`classifier` 取 `intent/judge` 列表首元素的裸引用，产出两层路由层草案（主路由 `auto` + 8 子组）：
 
    ```bash
    python3 -I scripts/render.py templates/groups.template.json <mapping.json> <草案.json>
    ```
 
-   同一角色槽的强度施加到该角色所有模型；组内重叠模型自动精确去重（保序）；需逐模型不同强度时渲染后手动微调。使用者可增删意图、角色或子组。
+   逐模型强度用 `@effort` 覆写，逐组差异化选型可在模板里直接写死 `模型:强度`（非角色成员原样透传，见 `docs/patterns.md` 复现配方）；组内重叠模型自动精确去重（保序）。使用者可增删意图、角色或子组。
 5. **校验**：生成已知模型清单（脱敏）并对草案执行完整校验，必须通过：
 
    ```bash
