@@ -1,0 +1,7 @@
+{
+  "reasoning/strong": "acme/strong-reasoner",
+  "code/general": "acme/code-standard",
+  "design/ui": "acme/vision-designer",
+  "fast/cheap": "acme/lite-chat",
+  "context/long": "acme/long-reader"
+}

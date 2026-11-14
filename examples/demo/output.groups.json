@@ -1,0 +1,75 @@
+{
+  "groups": [
+    {
+      "id": "coder",
+      "name": "编码主路由",
+      "members": [
+        "acme/lite-chat",
+        "acme/code-standard",
+        "acme/strong-reasoner",
+        "acme/vision-designer"
+      ],
+      "classifier": "acme/lite-chat",
+      "rules": [
+        {
+          "use": "acme/code-standard",
+          "more": ["acme/strong-reasoner"],
+          "intent": "写测试或修失败的测试"
+        },
+        {
+          "use": "acme/lite-chat",
+          "intent": "简单问答、查文档或命令"
+        },
+        {
+          "use": "acme/code-standard",
+          "more": ["acme/strong-reasoner"],
+          "intent": "实现新功能或修局部 bug"
+        },
+        {
+          "use": "acme/strong-reasoner",
+          "more": ["acme/code-standard"],
+          "intent": "重构、迁移或跨文件大改动"
+        },
+        {
+          "use": "acme/strong-reasoner",
+          "effort": "on",
+          "intent": "架构设计、方案选型或疑难排查"
+        },
+        {
+          "use": "acme/vision-designer",
+          "more": ["acme/code-standard"],
+          "intent": "前端界面、样式或视觉还原（含截图）"
+        },
+        {
+          "use": "acme/code-standard",
+          "more": ["acme/strong-reasoner"],
+          "intent": "审查代码或 review 改动"
+        },
+        {
+          "use": "acme/strong-reasoner",
+          "effort": "on"
+        },
+        {
+          "use": "acme/lite-chat",
+          "compact": true
+        }
+      ]
+    },
+    {
+      "id": "compact",
+      "name": "长上下文摘要",
+      "note": "摘要只要长上下文、快、便宜",
+      "members": [
+        "acme/long-reader",
+        "acme/lite-chat"
+      ],
+      "rules": [
+        {
+          "use": "acme/long-reader",
+          "more": ["acme/lite-chat"],
+          "compact": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。",
+  "roles": {
+    "reasoning/strong": {
+      "purpose": "架构设计、方案选型、疑难排查、跨文件大改动",
+      "hints": "名字含 pro/max/大参数/长上下文；支持高强度推理档位者优先"
+    },
+    "code/general": {
+      "purpose": "实现新功能、修局部 bug、写测试、review",
+      "hints": "通用编码模型，质量与成本均衡"
+    },
+    "design/ui": {
+      "purpose": "前端界面、样式、视觉还原（含截图）",
+      "hints": "支持图像输入（多模态）者优先"
+    },
+    "fast/cheap": {
+      "purpose": "简单问答、意图分类器、兜底",
+      "hints": "名字含 flash/mini/lite/air；低延迟低成本优先"
+    },
+    "context/long": {
+      "purpose": "长上下文摘要",
+      "hints": "上下文窗口大且便宜"
+    }
+  },
+  "mapping": {
+    "reasoning/strong": null,
+    "code/general": null,
+    "design/ui": null,
+    "fast/cheap": null,
+    "context/long": null
+  }
+}

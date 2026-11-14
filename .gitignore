@@ -1,0 +1,39 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.bak
+
+# Never commit a real machine's magpie config copied here by accident.
+# (The fictional fixture examples/demo/input.providers.json is intentional.)
+*providers*.json
+!examples/demo/input.providers.json
+credentials.json
+settings.json
+gateway.json
+served.json
+library.json
+*.jsonl
+*.jsonl.gz
+routing/
+auto-backups/
+plugin-auth.json
+logins.json
+stash.json
+affinity.json
+
+# Local scratch
+*.local
+
+# Internal development process (kept local; not part of the public product)
+docs/superpowers/
+tasks/

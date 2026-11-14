@@ -1,0 +1,75 @@
+{
+  "groups": [
+    {
+      "id": "coder",
+      "name": "编码主路由",
+      "members": [
+        "<role:fast/cheap>",
+        "<role:code/general>",
+        "<role:reasoning/strong>",
+        "<role:design/ui>"
+      ],
+      "classifier": "<role:fast/cheap>",
+      "rules": [
+        {
+          "use": "<role:code/general>",
+          "more": ["<role:reasoning/strong>"],
+          "intent": "写测试或修失败的测试"
+        },
+        {
+          "use": "<role:fast/cheap>",
+          "intent": "简单问答、查文档或命令"
+        },
+        {
+          "use": "<role:code/general>",
+          "more": ["<role:reasoning/strong>"],
+          "intent": "实现新功能或修局部 bug"
+        },
+        {
+          "use": "<role:reasoning/strong>",
+          "more": ["<role:code/general>"],
+          "intent": "重构、迁移或跨文件大改动"
+        },
+        {
+          "use": "<role:reasoning/strong>",
+          "effort": "on",
+          "intent": "架构设计、方案选型或疑难排查"
+        },
+        {
+          "use": "<role:design/ui>",
+          "more": ["<role:code/general>"],
+          "intent": "前端界面、样式或视觉还原（含截图）"
+        },
+        {
+          "use": "<role:code/general>",
+          "more": ["<role:reasoning/strong>"],
+          "intent": "审查代码或 review 改动"
+        },
+        {
+          "use": "<role:reasoning/strong>",
+          "effort": "on"
+        },
+        {
+          "use": "<role:fast/cheap>",
+          "compact": true
+        }
+      ]
+    },
+    {
+      "id": "compact",
+      "name": "长上下文摘要",
+      "note": "摘要只要长上下文、快、便宜",
+      "members": [
+        "<role:context/long>",
+        "<role:fast/cheap>"
+      ],
+      "rules": [
+        {
+          "use": "<role:context/long>",
+          "more": ["<role:fast/cheap>"],
+          "compact": true
+        }
+      ]
+    }
+  ]
+}

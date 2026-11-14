@@ -1,0 +1,19 @@
+{
+  "_comment": "虚构夹具：模拟使用者本机已有的 magpie 供应商配置。acme 是不存在的供应商，密钥为明显虚构的占位值，仅用于演示探测输入。",
+  "providers": [
+    {
+      "id": "acme",
+      "name": "Acme Cloud (fictional)",
+      "chat": "https://api.acme.invalid/v1",
+      "key": "acme-demo-key-fictional",
+      "models": [
+        "acme/strong-reasoner",
+        "acme/code-standard",
+        "acme/vision-designer",
+        "acme/lite-chat",
+        "acme/long-reader"
+      ]
+    }
+  ],
+  "groups": []
+}
