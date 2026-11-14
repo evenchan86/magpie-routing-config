@@ -205,11 +205,12 @@ for md in root.rglob("*.md"):
         if line.lstrip().startswith("```"):
             open_fence = not open_fence
     assert not open_fence, f"unbalanced fences: {md}"
-readme = (root / "README.md").read_text()
-for link in re.findall(r"\]\(([^)]+)\)", readme):
-    if "://" in link or link.startswith("#"):
-        continue
-    assert (root / link).exists(), f"broken README link: {link}"
+for name in ("README.md", "README.zh.md"):
+    readme = (root / name).read_text()
+    for link in re.findall(r"\]\(([^)]+)\)", readme):
+        if "://" in link or link.startswith("#"):
+            continue
+        assert (root / link).exists(), f"broken README link in {name}: {link}"
 print("docs fences and README links ok")
 PY
 ok "docs fences and README links"
