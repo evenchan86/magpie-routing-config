@@ -61,12 +61,12 @@
    **已知清单须为 `provider/model` 引用**：真实 magpie 的 `models` 数组存**裸名**（如 `cn:glm-5.3`、`k3.1-pro`），而 mapping/成员引用是 `provider/model`，故按供应商 id 拼前缀；模型名已含 `/` 的保持原样（兼容 demo 夹具）。直接取裸名会让校验器把所有引用判为 unknown。
 
    校验覆盖：字段白名单（rule 字段以 JSON 为准）、无占位残留、无密钥、模型引用已知（含 classifier）、组引用存在/禁自包含/嵌套深度≤8、**classifier 跨组分离守卫**（classifier 模型不得进任何路由组的成员/规则目标）、规则 use/more 须为本组成员、每条规则有 `use`、**每组 members 非空**（默认兜底按组 routing 模式，不强制 `compact:true`）、routing/affinity/effort 枚举、where/time/exceptFolders 等类型结构。
-6. **应用（合并语义明确）**：
-   - **先备份**原配置；**只合并 groups 路由层，不动 providers 供应商段**。
-   - 合并规则：按 group `id` **upsert**——同 id 替换该组对象，新 id 追加到 groups 数组末尾；其余组原样保留。两层结构里主路由与子组都按 id upsert。
-   - 写入前向使用者**展示合并 diff**，得到明确确认后才写入。
-   - 写入后引导使用者在 magpie 中把 agent 路由指向 `group/auto`（摘要组按 magpie 摘要入口选择；入口未定位时请使用者在 UI 自行确认）。
-   - **写后验收**：发一条简单测试请求，确认正常响应且路由到预期模型（可查 magpie 日志）；无法自动验证时，给使用者手动验证步骤，不要宣称已生效。
+6. **应用（用 `scripts/apply.py`，合并语义明确）**：
+   - **先 dry-run**：`python3 -I scripts/apply.py <草案.json> ~/.config/magpie/providers.json`——先按 id 合并、再校验**合并结果**（不通过不合并、不写文件），然后展示组级合并计划（新增/替换/保留），**不写文件**。校验对象必须是合并后的全量 groups：classifier 跨组分离、组引用存在这类守卫只在合并结果上才成立（只校验草案孤岛会既漏判跨组冲突，又误拒「草案引用已存在组」这种合法写法）。
+   - 把 dry-run 的合并计划**展示给使用者**，得到明确确认后才加 `--write` 写入。`--write` 会**先备份**（`providers.json.bak-<时间戳>`，保留原文件权限如同秒重跑加序号不覆盖）、按 group `id` **upsert**（同 id 替换该组对象、新 id 追加末尾、其余原样保留）、**只动 groups 不碰 providers**，并做**写后读回磁盘校验**（providers 段逐键不变 + 落盘 groups 合法）；写入损坏或校验失败会**自动从备份恢复原配置**并非零退出。草案里若带 providers 段会被忽略（只合并 groups），脚本会提示。
+   - 若校验报的问题出在**本次不替换的存量组**，那是使用者现有配置的问题：先用 doctor.py 诊断，与使用者确认后再决定怎么处理，不要为了通过校验擅自改动存量组。
+   - 诊断现有配置用 `python3 -I scripts/doctor.py ~/.config/magpie/providers.json`（只读，输出组结构 + 校验结果 + 手动冒烟步骤，不含密钥/endpoint）。配置畸形（providers 非对象列表、groups 非 list）会明确 FAIL，不会谎报「尚未配置」。
+   - **写后验收**：magpie 无 CLI 路由接管，需引导使用者在 UI 把 agent 路由指向 `group/auto`（摘要组按 magpie 摘要入口选择），发一条简单测试请求，查 magpie 日志确认路由到预期模型；无法自动验证时给手动步骤（doctor.py 会打印），不要宣称已生效。
 
 ## 红线
 
@@ -84,7 +84,9 @@
 - `docs/schema.md`：字段参考（逐字段标来源与校验状态）、routing 12 模式（含 manual）/ affinity 5 值语义、member 写法、组嵌套、待验证清单。
 - `docs/patterns.md`：两层意图分发主模式 + 子组池模式 + 每模型强度 + 多通道额度分摊。
 - `templates/roles.json`：6 个模型角色与映射启发式（含独立 `intent/judge`）；mapping 为「角色 → 有序模型列表」。
-- `scripts/render.py`：把角色列表映射展开进模板（成员多模型展开 + classifier 取首元素）。
+- `scripts/render.py`：把角色列表映射展开进模板（成员多模型展开 + @effort 覆写 + classifier 取首元素裸引用）。
+- `scripts/apply.py`：草案按 id upsert 合并进本机配置（dry-run 默认；校验合并结果，`--write` 备份+写后读回校验+失败自动恢复，只动 groups）。
+- `scripts/doctor.py`：只读诊断现有配置（组结构 + 校验 + 手动冒烟步骤，输出脱敏）。
 - `examples/demo/`：虚构供应商的两层完整走通示例（含多模型子组）。
 
 ## 本仓库自身的开发命令

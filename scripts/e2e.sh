@@ -615,4 +615,243 @@ if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: crashed: $OUT"; exit 1; fi
 if ! grep -q "模型名为空" <<< "$OUT"; then echo "FAIL: missing diagnostic: $OUT"; exit 1; fi
 ok "render rejects empty model base (clean FAIL)"
 
+# 46. doctor：对未配置路由层（groups=[]）报告并给指引，退出 0
+python3 -I scripts/doctor.py "$FAKE_HOME/.config/magpie/providers.json" > "$TMP/doc-empty.txt"
+grep -q "no routing layer" "$TMP/doc-empty.txt"
+ok "doctor reports unconfigured routing layer"
+
+# 47. apply dry-run：展示合并计划但不写文件
+cp examples/demo/input.providers.json "$TMP/apply-target.json"
+python3 -I scripts/apply.py examples/demo/output.groups.json "$TMP/apply-target.json" > "$TMP/apply-dry.txt"
+grep -q "dry-run: nothing written" "$TMP/apply-dry.txt"
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+a = json.loads(Path("examples/demo/input.providers.json").read_text())
+b = json.loads((tmp/"apply-target.json").read_text())
+assert a == b, "dry-run modified target"
+PY
+ok "apply dry-run shows plan without writing"
+
+# 48. apply --write：备份 + upsert + providers 段 deep-equal 不变 + 写后校验 PASS
+python3 -I scripts/apply.py examples/demo/output.groups.json "$TMP/apply-target.json" --write > "$TMP/apply-write.txt"
+grep -q "post-write validation PASS" "$TMP/apply-write.txt"
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+orig = json.loads(Path("examples/demo/input.providers.json").read_text())
+new = json.loads((tmp/"apply-target.json").read_text())
+assert {k: v for k, v in orig.items() if k != "groups"} == {k: v for k, v in new.items() if k != "groups"}, "providers section changed"
+assert len(new["groups"]) == 9
+baks = list(tmp.glob("apply-target.json.bak-*"))
+assert baks, "no backup created"
+# 备份必须等于【写入前】的原始内容，否则「从备份恢复」恢复出来的是合并后的配置
+assert json.loads(baks[0].read_text()) == orig, "backup does not match the pre-write original"
+PY
+ok "apply --write backs up (content == original), upserts, keeps providers, post-validates"
+
+# 49. apply upsert 语义：同 id 替换、新 id 追加、其余保留
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+d = json.loads((tmp/"apply-target.json").read_text())
+d["groups"].append({"id": "extra", "routing": "order", "members": ["acme/lite-chat:low"]})
+(tmp/"apply-target.json").write_text(json.dumps(d))
+(tmp/"draft2.json").write_text(json.dumps({"groups": [
+    {"id": "g-code", "routing": "order", "members": ["acme/code-standard:max"]},
+    {"id": "g-new", "routing": "usage", "members": ["acme/lite-chat:low"]}]}))
+PY
+python3 -I scripts/apply.py "$TMP/draft2.json" "$TMP/apply-target.json" --write >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"apply-target.json").read_text())["groups"]}
+assert g["g-code"]["members"] == ["acme/code-standard:max"], "g-code not replaced"
+assert "g-new" in g and "extra" in g and "auto" in g, "upsert lost groups"
+assert len(g) == 11, len(g)
+PY
+ok "apply upsert replaces by id, appends new, keeps others"
+
+# 50. apply 坏草案（未知模型）必须拒绝且不写
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+(tmp/"bad-draft.json").write_text(json.dumps({"groups": [{"id": "g-bad", "routing": "order", "members": ["acme/does-not-exist:high"]}]}))
+PY
+if python3 -I scripts/apply.py "$TMP/bad-draft.json" "$TMP/apply-target.json" --write >/dev/null 2>&1; then echo "FAIL: bad draft accepted"; exit 1; fi
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"] for x in json.loads((tmp/"apply-target.json").read_text())["groups"]}
+assert "g-bad" not in g, "bad draft was written"
+PY
+ok "apply rejects invalid draft without writing"
+
+# 51. apply/doctor 输出脱敏：不含密钥，也不含 endpoint
+python3 -I scripts/doctor.py "$TMP/apply-target.json" > "$TMP/doc-full.txt"
+python3 -I scripts/apply.py examples/demo/output.groups.json "$TMP/apply-target.json" > "$TMP/apply-plan.txt" 2>&1
+if grep -q "acme-demo-key-fictional" "$TMP/doc-full.txt" "$TMP/apply-plan.txt"; then echo "FAIL: key leaked into output"; exit 1; fi
+if grep -q "api.acme.invalid" "$TMP/doc-full.txt" "$TMP/apply-plan.txt"; then echo "FAIL: endpoint leaked into output"; exit 1; fi
+ok "apply/doctor output contains no secrets or endpoints"
+
+# 52. 合并结果非法（跨组 classifier 冲突：存量组成员 == 草案 classifier）必须【写前】拒绝
+#     只校验草案孤岛会漏判此例（红线：classifier 绝不进任何路由成员）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+base = json.loads(Path("examples/demo/input.providers.json").read_text())
+base["groups"] = [{"id": "g-legacy", "routing": "order", "members": ["acme/judge:low"]}]
+(tmp/"cross-target.json").write_text(json.dumps(base))
+(tmp/"cross-draft.json").write_text(json.dumps({"groups": [
+    {"id": "auto", "routing": "order", "classifier": "acme/judge", "members": ["acme/code-standard:high"]}]}))
+PY
+if python3 -I scripts/apply.py "$TMP/cross-draft.json" "$TMP/cross-target.json" --write > "$TMP/cross.txt" 2>&1; then
+  echo "FAIL: cross-group classifier conflict was written"; exit 1
+fi
+grep -q "nothing merged" "$TMP/cross.txt" || { echo "FAIL: merged conflict was not refused before writing"; exit 1; }
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"] for x in json.loads((tmp/"cross-target.json").read_text())["groups"]}
+assert g == {"g-legacy"}, f"target was modified: {g}"
+assert not list(tmp.glob("cross-target.json.bak-*")), "wrote a backup although nothing was merged"
+PY
+ok "apply refuses an invalid MERGED result before writing (cross-group classifier)"
+
+# 53. 草案引用【已存在】的组：合并后合法，不得误拒（孤岛校验的假阳性回归）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+base = json.loads(Path("examples/demo/input.providers.json").read_text())
+base["groups"] = [{"id": "g-sub", "routing": "order", "members": ["acme/code-standard:high"]}]
+(tmp/"ref-target.json").write_text(json.dumps(base))
+(tmp/"ref-draft.json").write_text(json.dumps({"groups": [
+    {"id": "auto", "routing": "order", "classifier": "acme/judge", "members": ["group/g-sub"]}]}))
+PY
+python3 -I scripts/apply.py "$TMP/ref-draft.json" "$TMP/ref-target.json" --write > "$TMP/ref.txt"
+grep -q "post-write validation PASS" "$TMP/ref.txt"
+ok "apply accepts a draft referencing an existing group (no island false-positive)"
+
+# 54. 存量 groups 含非 dict 项：干净 FAIL，不 traceback
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+base = json.loads(Path("examples/demo/input.providers.json").read_text())
+base["groups"] = [42, {"id": "g-old", "routing": "order", "members": ["acme/lite-chat:low"]}]
+(tmp/"malformed.json").write_text(json.dumps(base))
+PY
+OUT="$(python3 -I scripts/apply.py "$TMP/ref-draft.json" "$TMP/malformed.json" 2>&1)" && { echo "FAIL: malformed existing groups accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: apply crashed: $OUT"; exit 1; fi
+grep -q "must be an object" <<< "$OUT"
+ok "apply rejects non-object existing groups cleanly"
+
+# 55. doctor 对畸形配置（providers 非对象列表 / groups 非 list）干净 FAIL，不谎报「未配置」
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+base = json.loads(Path("examples/demo/input.providers.json").read_text())
+for name, patch in (("bad-providers", {"providers": {"id": "acme"}}),
+                    ("bad-groups", {"groups": {"id": "x"}})):
+    d = dict(base); d.update(patch)
+    (tmp/f"{name}.json").write_text(json.dumps(d))
+PY
+for f in bad-providers bad-groups; do
+  OUT="$(python3 -I scripts/doctor.py "$TMP/$f.json" 2>&1)" && { echo "FAIL: doctor accepted $f"; exit 1; }
+  if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: doctor crashed on $f: $OUT"; exit 1; fi
+  if grep -q "no routing layer" <<< "$OUT"; then echo "FAIL: doctor masked corruption in $f"; exit 1; fi
+  grep -q "FAIL" <<< "$OUT"
+done
+ok "doctor reports malformed providers/groups cleanly (no crash, no false 'unconfigured')"
+
+# 56. 备份保留原文件权限（0600 密钥文件不得放大成 0644）；同秒重跑不覆盖上一份备份
+python3 -I - "$TMP" <<'PY'
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+tgt = tmp/"perm.json"
+shutil.copyfile("examples/demo/input.providers.json", tgt)
+os.chmod(tgt, 0o600)
+original = tgt.read_text()
+for _ in range(2):
+    subprocess.run([sys.executable, "-I", "scripts/apply.py", "examples/demo/output.groups.json",
+                    str(tgt), "--write"], check=True, capture_output=True, text=True)
+baks = sorted(tmp.glob("perm.json.bak-*"))
+assert len(baks) == 2, f"same-second runs overwrote a backup: {[b.name for b in baks]}"
+for b in baks:
+    assert (b.stat().st_mode & 0o777) == 0o600, f"backup mode widened: {oct(b.stat().st_mode & 0o777)}"
+assert baks[0].read_text() == original, "first backup is not the pre-write original"
+PY
+ok "apply backups keep 0600 mode and never overwrite (same-second runs)"
+
+# 57. 写后守卫探针（自变异，只在临时副本里改坏；先确认注入生效再断言守卫）：
+#     落盘 JSON 损坏 / providers 被篡改 / groups 被写坏 → 写后读回校验必须 FAIL 并自动恢复
+python3 -I - "$TMP" <<'PY'
+import json, shutil, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+WRITE = '    target_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\\n")'
+MUT = {
+  "corrupt-json": '    target_path.write_text("{ this is not json")',
+  "providers-tampered": '    bad = dict(result); bad["providers"] = [{"id": "evil"}]\n'
+                        '    target_path.write_text(json.dumps(bad, ensure_ascii=False, indent=2) + "\\n")',
+  "groups-corrupted": '    bad = json.loads(json.dumps(result))\n'
+                      '    bad["groups"][0]["members"] = ["acme/ghost-model"]\n'
+                      '    target_path.write_text(json.dumps(bad, ensure_ascii=False, indent=2) + "\\n")',
+}
+src = Path("scripts/apply.py").read_text()
+assert WRITE in src, "write-line anchor missing; mutation would not take effect"
+for name, mut in MUT.items():
+    work = tmp/f"mut-{name}"
+    shutil.copytree("scripts", work/"scripts")
+    (work/"scripts/apply.py").write_text(src.replace(WRITE, mut))
+    tgt = work/"providers.json"
+    shutil.copyfile("examples/demo/input.providers.json", tgt)
+    original = tgt.read_text()
+    p = subprocess.run([sys.executable, "-I", str(work/"scripts/apply.py"),
+                        "examples/demo/output.groups.json", str(tgt), "--write"],
+                       capture_output=True, text=True)
+    out = p.stdout + p.stderr
+    assert p.returncode != 0, f"{name}: corrupted write went undetected\n{out}"
+    assert "restored the original config" in out, f"{name}: did not restore\n{out}"
+    assert tgt.read_text() == original, f"{name}: target not restored to original"
+    assert "post-write validation PASS" not in out, f"{name}: claimed success"
+    # 对照：未改坏的原版同一输入必须成功
+    tgt2 = work/"control.json"
+    shutil.copyfile("examples/demo/input.providers.json", tgt2)
+    c = subprocess.run([sys.executable, "-I", "scripts/apply.py", "examples/demo/output.groups.json",
+                        str(tgt2), "--write"], capture_output=True, text=True)
+    assert c.returncode == 0, f"control run failed: {c.stdout}{c.stderr}"
+PY
+ok "post-write on-disk guard catches corrupted writes and auto-restores (mutation probe)"
+
+# 58. 真实 magpie 形态：自建空组的 members/rules 为 null，doctor/apply 不得崩溃
+#     （本机实测踩到：len(None) 让 doctor 在真实配置上 traceback）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+base = json.loads(Path("examples/demo/input.providers.json").read_text())
+base["groups"] = [{"id": "auto-legacy", "routing": "order", "members": None, "rules": None}]
+(tmp/"null-members.json").write_text(json.dumps(base))
+PY
+OUT="$(python3 -I scripts/doctor.py "$TMP/null-members.json" 2>&1)"
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: doctor crashed on null members: $OUT"; exit 1; fi
+grep -q "members=0" <<< "$OUT"
+grep -q "must be list" <<< "$OUT"
+OUT="$(python3 -I scripts/apply.py "$TMP/ref-draft.json" "$TMP/null-members.json" 2>&1)" && { echo "FAIL: null-members group passed validation"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: apply crashed on null members: $OUT"; exit 1; fi
+grep -q "nothing merged" <<< "$OUT"
+ok "doctor/apply tolerate real magpie null members/rules (no crash, honest findings)"
+
 echo "E2E PASS: ${CHECKS} checks"
