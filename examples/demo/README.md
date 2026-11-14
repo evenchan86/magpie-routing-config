@@ -1,4 +1,4 @@
-# Demo：虚构供应商的完整走通示例
+# Demo：虚构供应商的两层路由走通示例
 
 用不存在的供应商 `acme/*` 演示 agent 工作流的输入与产物，不含任何真实模型或密钥。
 
@@ -7,8 +7,14 @@
 | 文件 | 对应工作流步骤 | 说明 |
 |---|---|---|
 | `input.providers.json` | 2. 探测 | 模拟使用者本机已有的供应商配置（密钥为虚构值） |
-| `roles.mapped.json` | 3. 映射 | 使用者确认后的「角色 → 模型」映射 |
-| `output.groups.json` | 4. 渲染 | 用映射填充 `templates/groups.template.json` 后的路由层产物 |
+| `roles.mapped.json` | 3. 映射 | 使用者确认后的「角色 → 模型」映射（6 角色，含独立的 `intent/judge`） |
+| `output.groups.json` | 4. 渲染 | 用映射填充 `templates/groups.template.json` 后的两层路由产物（主路由 `auto` + 8 子组） |
+
+## 两层结构
+
+- 主路由 `auto`：`classifier=acme/judge` 只做意图判断，规则 `use=group/g-xxx` 分发到子组；无命中按成员顺序兜底到第一位 `group/g-code`。
+- 8 个任务子组：成员用「角色:强度」（如 `acme/code-standard:high`），各带 `routing`（`order` 故障转移 / `usage` 额度分摊）。
+- `acme/judge` 只出现在 `auto.classifier`，**绝不**进任何组的成员/规则目标/兜底。
 
 ## 复现
 
@@ -20,7 +26,8 @@ d=json.load(open('examples/demo/input.providers.json'))
 print(json.dumps(sorted({m for p in d['providers'] for m in p['models']})))
 " > /tmp/demo-known.json
 
-# 完整校验：字段白名单、无占位、无密钥、模型引用已知（含 classifier）、规则完整、compact 兜底
+# 完整校验：字段白名单、无占位、无密钥、模型引用已知（含 classifier）、
+# 组引用存在/禁自包含/深度≤8、classifier 分离、每组 members 非空（默认兜底=成员顺序）
 python3 -I scripts/validate.py examples/demo/output.groups.json /tmp/demo-known.json
 
 # 隔离验收：渲染 = 模板 + 映射，且与 output.groups.json 一致，含正反向断言

@@ -1,75 +1,83 @@
 {
   "groups": [
     {
-      "id": "coder",
-      "name": "编码主路由",
+      "id": "auto",
+      "name": "主路由（意图分发）",
+      "note": "只做意图判断再分发到子组；默认走成员顺序第一位 g-code",
+      "classifier": "<role:intent/judge>",
+      "routing": "order",
       "members": [
-        "<role:fast/cheap>",
-        "<role:code/general>",
-        "<role:reasoning/strong>",
-        "<role:design/ui>"
+        "group/g-code",
+        "group/g-test",
+        "group/g-light",
+        "group/g-heavy",
+        "group/g-arch",
+        "group/g-ui",
+        "group/g-review",
+        "group/g-compact"
       ],
-      "classifier": "<role:fast/cheap>",
       "rules": [
-        {
-          "use": "<role:code/general>",
-          "more": ["<role:reasoning/strong>"],
-          "intent": "写测试或修失败的测试"
-        },
-        {
-          "use": "<role:fast/cheap>",
-          "intent": "简单问答、查文档或命令"
-        },
-        {
-          "use": "<role:code/general>",
-          "more": ["<role:reasoning/strong>"],
-          "intent": "实现新功能或修局部 bug"
-        },
-        {
-          "use": "<role:reasoning/strong>",
-          "more": ["<role:code/general>"],
-          "intent": "重构、迁移或跨文件大改动"
-        },
-        {
-          "use": "<role:reasoning/strong>",
-          "effort": "on",
-          "intent": "架构设计、方案选型或疑难排查"
-        },
-        {
-          "use": "<role:design/ui>",
-          "more": ["<role:code/general>"],
-          "intent": "前端界面、样式或视觉还原（含截图）"
-        },
-        {
-          "use": "<role:code/general>",
-          "more": ["<role:reasoning/strong>"],
-          "intent": "审查代码或 review 改动"
-        },
-        {
-          "use": "<role:reasoning/strong>",
-          "effort": "on"
-        },
-        {
-          "use": "<role:fast/cheap>",
-          "compact": true
-        }
+        { "use": "group/g-compact", "compact": true },
+        { "use": "group/g-test", "intent": "写测试或修失败的测试" },
+        { "use": "group/g-light", "intent": "简单问答、查文档或命令" },
+        { "use": "group/g-code", "intent": "实现新功能或修局部 bug" },
+        { "use": "group/g-heavy", "intent": "重构、迁移或跨文件大改动" },
+        { "use": "group/g-arch", "intent": "架构设计、方案选型或疑难排查" },
+        { "use": "group/g-ui", "intent": "前端界面设计或还原截图" },
+        { "use": "group/g-review", "intent": "审查代码或 review 改动" },
+        { "use": "group/g-heavy", "effort": "on" }
       ]
     },
     {
-      "id": "compact",
+      "id": "g-compact",
       "name": "长上下文摘要",
       "note": "摘要只要长上下文、快、便宜",
-      "members": [
-        "<role:context/long>",
-        "<role:fast/cheap>"
-      ],
-      "rules": [
-        {
-          "use": "<role:context/long>",
-          "more": ["<role:fast/cheap>"],
-          "compact": true
-        }
-      ]
+      "routing": "order",
+      "members": ["<role:context/long>:low", "<role:fast/cheap>:low"]
+    },
+    {
+      "id": "g-test",
+      "name": "测试",
+      "routing": "usage",
+      "members": ["<role:code/general>:high"]
+    },
+    {
+      "id": "g-light",
+      "name": "轻量问答",
+      "routing": "usage",
+      "members": ["<role:fast/cheap>:low"]
+    },
+    {
+      "id": "g-code",
+      "name": "日常编码（默认）",
+      "routing": "order",
+      "members": ["<role:code/general>:high", "<role:fast/cheap>:medium"]
+    },
+    {
+      "id": "g-heavy",
+      "name": "重构/大改动",
+      "note": "通用强模型在前保护旗舰额度；额度充裕可对调",
+      "routing": "order",
+      "members": ["<role:code/general>:high", "<role:reasoning/strong>:high"]
+    },
+    {
+      "id": "g-arch",
+      "name": "架构/疑难",
+      "routing": "order",
+      "members": ["<role:reasoning/strong>:max", "<role:code/general>:xhigh"]
+    },
+    {
+      "id": "g-ui",
+      "name": "前端设计",
+      "routing": "order",
+      "members": ["<role:design/ui>:medium", "<role:code/general>:medium"]
+    },
+    {
+      "id": "g-review",
+      "name": "代码审查",
+      "note": "刻意选与写代码不同的模型家族，视角不同",
+      "routing": "order",
+      "members": ["<role:code/general>:medium", "<role:fast/cheap>:high"]
     }
   ]
 }

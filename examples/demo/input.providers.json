@@ -11,7 +11,8 @@
         "acme/code-standard",
         "acme/vision-designer",
         "acme/lite-chat",
-        "acme/long-reader"
+        "acme/long-reader",
+        "acme/judge"
       ]
     }
   ],

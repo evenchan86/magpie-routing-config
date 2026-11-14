@@ -1,4 +1,5 @@
 {
+  "intent/judge": "acme/judge",
   "reasoning/strong": "acme/strong-reasoner",
   "code/general": "acme/code-standard",
   "design/ui": "acme/vision-designer",

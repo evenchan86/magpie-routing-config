@@ -1,6 +1,10 @@
 {
-  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。",
+  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。intent/judge 是意图判断专用角色——只填 group.classifier，绝不进路由成员/规则目标/兜底，与 fast/cheap 路由角色分离。",
   "roles": {
+    "intent/judge": {
+      "purpose": "意图判断（classifier 专用）：每回合判断请求意图，不回答请求",
+      "hints": "便宜、快、不带推理的判断模型（如 typesafe/jev）；magpie 自动用最低档。绝不作为路由成员/规则目标/兜底"
+    },
     "reasoning/strong": {
       "purpose": "架构设计、方案选型、疑难排查、跨文件大改动",
       "hints": "名字含 pro/max/大参数/长上下文；支持高强度推理档位者优先"
@@ -14,8 +18,8 @@
       "hints": "支持图像输入（多模态）者优先"
     },
     "fast/cheap": {
-      "purpose": "简单问答、意图分类器、兜底",
-      "hints": "名字含 flash/mini/lite/air；低延迟低成本优先"
+      "purpose": "简单问答、轻量任务、兜底（正常路由成员）",
+      "hints": "名字含 flash/mini/lite/air；低延迟低成本优先。与 intent/judge 分开，不是分类器"
     },
     "context/long": {
       "purpose": "长上下文摘要",
@@ -23,6 +27,7 @@
     }
   },
   "mapping": {
+    "intent/judge": null,
     "reasoning/strong": null,
     "code/general": null,
     "design/ui": null,

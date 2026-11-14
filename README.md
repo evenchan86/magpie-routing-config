@@ -20,48 +20,58 @@ Then tell your agent (Claude Code / Codex / …):
 
 > Read this repo's AGENTS.md and configure my local magpie routing following the workflow.
 
-The agent will: probe your local config schema → discover your providers and models → propose a role→model mapping (**you confirm**) → render a routing-layer draft → validate → back up and merge-write (**you confirm**).
+The agent will: probe your local config schema → discover your providers and models → propose a role→model mapping (**you confirm**) → render a two-layer routing draft → validate → back up and merge-write (**you confirm**).
 
 Your providers and keys **stay untouched**; this repo only touches the routing layer (groups/rules/classifier).
 
-## Core concept: model roles
+## Core concept: two-layer intent dispatch
 
-Strategies aren't bound to specific models. Five capability roles are mapped to your own models:
+Routing is split into two layers so intent judgment and model selection stay separate:
+
+- **Main router (`auto`)** — a small fast **classifier** judges the intent of each turn, then dispatches to a task subgroup via `use=group/<id>`. It does no model selection itself. When no intent matches, it falls back to its first member (the everyday-coding subgroup).
+- **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning its members and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix.
+
+The classifier is a **separate role**: it only judges intent and is **never** a routing member, rule target, or fallback.
+
+## Model roles
+
+Strategies aren't bound to specific models. Six capability roles are mapped to your own models:
 
 | Role | Purpose |
 |---|---|
+| `intent/judge` | Intent classification **only** (the classifier); never a routing member/target/fallback |
 | `reasoning/strong` | Architecture, hard debugging, large changes |
 | `code/general` | Implementation, bug fixes, tests, review |
 | `design/ui` | UI, styling, visual reproduction (incl. screenshots) |
-| `fast/cheap` | Simple Q&A, intent classifier, fallback |
+| `fast/cheap` | Simple Q&A, lightweight fallback (not the classifier) |
 | `context/long` | Long-context summarization |
 
-Seven mutually exclusive intents (test / Q&A / implement / refactor / architecture / UI / review) + reasoning trigger + fallback + summarization group cover the coding loop. See the [routing pattern library](docs/patterns.md).
+Seven mutually exclusive intents (test / Q&A / implement / refactor / architecture / UI / review) + a reasoning trigger + a compaction rule cover the coding loop. See the [routing pattern library](docs/patterns.md).
 
 ## Repository layout
 
 ```text
 AGENTS.md                  # agent workflow & red lines (entry point)
 docs/
-  concepts.md              # routing concepts
-  schema.md                # config field reference (with confidence notes)
+  concepts.md              # routing concepts (two layers, pools vs failover)
+  schema.md                # config field reference (with source & confidence notes)
   patterns.md              # routing pattern library
 templates/
   roles.json               # role definitions & mapping
-  groups.template.json     # routing-layer template (role placeholders)
+  groups.template.json     # two-layer routing template (role placeholders)
 examples/demo/             # end-to-end example with a fictional provider
 scripts/
-  validate.py              # routing-layer draft validator
+  validate.py              # routing-layer draft validator (group refs, classifier separation)
   e2e.sh                   # isolated acceptance test
 ```
 
 ## Example
 
-[examples/demo/](examples/demo/README.md) walks from local config to a routing-layer artifact using a fictional provider `acme/*`.
+[examples/demo/](examples/demo/README.md) walks from local config to a two-layer routing artifact using a fictional provider `acme/*`.
 
 ## Honesty note
 
-The schema docs are based on single-machine observation of magpie v0.1.4130 and are **not an official specification**; the agent workflow defers to probing your actual local config. Fields with uncertain semantics are flagged individually in [schema.md](docs/schema.md).
+The schema docs are grounded in the [official docs](https://usemagpie.ai/docs/zh), the magpie CLI help, and empirical probes — but are **not a substitute for your own machine**: the agent workflow defers to probing your actual local config. Fields with uncertain semantics are flagged individually in [schema.md](docs/schema.md).
 
 ## License
 

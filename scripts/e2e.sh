@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 隔离 E2E：不碰真实本机 magpie 配置。用法：bash scripts/e2e.sh
+# 隔离 E2E（两层路由）：不碰真实本机 magpie 配置。用法：bash scripts/e2e.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -14,17 +14,16 @@ mkdir -p "$FAKE_HOME/.config/magpie"
 cp examples/demo/input.providers.json "$FAKE_HOME/.config/magpie/providers.json"
 [ -f "$FAKE_HOME/.config/magpie/providers.json" ] && ok "isolated fake HOME fixture"
 
-# 2. 渲染：模板 + 映射 -> 产物（模拟 agent 占位替换）
+# 2. 渲染：模板 + 映射 -> 产物（模拟 agent 占位替换，含 :effort 后缀）
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-root = Path.cwd()
-tmp = Path(sys.argv[1])
-tpl = (root / "templates/groups.template.json").read_text()
-mapping = json.loads((root / "examples/demo/roles.mapped.json").read_text())
+root = Path.cwd(); tmp = Path(sys.argv[1])
+tpl = (root/"templates/groups.template.json").read_text()
+mapping = json.loads((root/"examples/demo/roles.mapped.json").read_text())
 for role, model in mapping.items():
     tpl = tpl.replace(f"<role:{role}>", model)
-(tmp / "rendered.json").write_text(tpl)
+(tmp/"rendered.json").write_text(tpl)
 PY
 ok "template renders with role mapping"
 
@@ -33,138 +32,316 @@ python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
 tmp = Path(sys.argv[1])
-a = json.loads((tmp / "rendered.json").read_text())
+a = json.loads((tmp/"rendered.json").read_text())
 b = json.loads(Path("examples/demo/output.groups.json").read_text())
 assert a == b, "rendered output diverges from demo"
 PY
 ok "rendered output matches demo"
 
-# 4. 已知模型集合来自虚构本机配置（脱敏：只取模型名）
+# 4. 已知模型集合（demo 模型名自带 acme/ 前缀）
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
 tmp = Path(sys.argv[1])
 doc = json.loads(Path("examples/demo/input.providers.json").read_text())
 models = sorted({m for p in doc["providers"] for m in p.get("models", [])})
-(tmp / "known.json").write_text(json.dumps(models))
+(tmp/"known.json").write_text(json.dumps(models))
 PY
 ok "known model set derived from fixture"
 
 # 5. validate 对 demo 产物 PASS
 python3 -I scripts/validate.py "$TMP/rendered.json" "$TMP/known.json" >/dev/null
-ok "validate PASS on demo output"
+ok "validate PASS on two-layer demo"
 
-# 6. 反向断言：占位残留必须 FAIL
+# 6. 反向：占位残留必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["groups"][0]["rules"][0]["use"] = "<role:fast/cheap>"
-(tmp / "bad-placeholder.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["members"][0] = "<role:fast/cheap>"
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-placeholder.json" >/dev/null 2>&1; then
-  echo "FAIL: placeholder draft accepted"; exit 1
-fi
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: placeholder accepted"; exit 1; fi
 ok "placeholder draft rejected"
 
-# 7. 反向断言：非法字段（日志 when 语法）必须 FAIL
+# 7. 反向：非法字段（日志 held；when/tz/days 等是 CLI 旗标名非 JSON 字段）必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["groups"][0]["rules"][0]["when"] = ["reasoning"]
-(tmp / "bad-field.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+d["groups"][0]["rules"][1]["held"] = ["reasoning"]
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-field.json" >/dev/null 2>&1; then
-  echo "FAIL: unknown-field draft accepted"; exit 1
-fi
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: unknown field accepted"; exit 1; fi
 ok "unknown-field draft rejected"
 
-# 8. 反向断言：规则内密钥必须 FAIL
+# 8. 反向：规则内密钥必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["groups"][0]["rules"][0]["use"] = "FAKE-injected-secret"
-(tmp / "bad-secret.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+d["groups"][0]["rules"][1]["use"] = "FAKE-injected-secret"
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-secret.json" >/dev/null 2>&1; then
-  echo "FAIL: secret draft accepted"; exit 1
-fi
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: secret accepted"; exit 1; fi
 ok "secret-like draft rejected"
 
-# 9. 反向断言：classifier 未知模型必须 FAIL
+# 9. 反向：classifier 未知模型必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["groups"][0]["classifier"] = "acme/does-not-exist"
-(tmp / "bad-classifier.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["auto"]["classifier"] = "acme/does-not-exist"
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-classifier.json" "$TMP/known.json" >/dev/null 2>&1; then
-  echo "FAIL: unknown classifier accepted"; exit 1
-fi
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: unknown classifier accepted"; exit 1; fi
 ok "unknown classifier rejected"
 
-# 10. 反向断言：顶层 providers 段（含密钥）必须 FAIL
+# 10. 反向：顶层 providers 段必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["providers"] = [{"id": "acme", "key": "FAKE-top-level-key"}]
-(tmp / "bad-top.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+d["providers"] = [{"id": "acme", "key": "FAKE-top-level-key"}]
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-top.json" >/dev/null 2>&1; then
-  echo "FAIL: top-level providers accepted"; exit 1
-fi
+if python3 -I scripts/validate.py "$TMP/bad.json" >/dev/null 2>&1; then echo "FAIL: top-level providers accepted"; exit 1; fi
 ok "top-level providers section rejected"
 
-# 11. 反向断言：缺 use 的规则必须 FAIL
+# 11. 反向：缺 use 的规则必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-del doc["groups"][0]["rules"][0]["use"]
-(tmp / "bad-nouse.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+del d["groups"][0]["rules"][1]["use"]
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-nouse.json" >/dev/null 2>&1; then
-  echo "FAIL: missing-use rule accepted"; exit 1
-fi
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: missing-use accepted"; exit 1; fi
 ok "missing-use rule rejected"
 
-# 12. 反向断言：缺 compact 兜底的组必须 FAIL
+# 12. 反向：空成员（默认兜底失效）必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["groups"][0]["rules"] = [r for r in doc["groups"][0]["rules"] if not r.get("compact")]
-(tmp / "bad-nofallback.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-code"]["members"] = []
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-if python3 -I scripts/validate.py "$TMP/bad-nofallback.json" >/dev/null 2>&1; then
-  echo "FAIL: missing-fallback group accepted"; exit 1
-fi
-ok "missing-fallback group rejected"
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: empty members accepted"; exit 1; fi
+ok "empty-members group rejected"
 
-# 13. 正例：members 的 :effort 后缀在 known 校验下必须 PASS
+# 13. 反向：未知组引用必须 FAIL
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
-tmp = Path(sys.argv[1])
-doc = json.loads((tmp / "rendered.json").read_text())
-doc["groups"][0]["members"][0] = "acme/lite-chat:low"
-(tmp / "good-effort.json").write_text(json.dumps(doc))
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["auto"]["members"][0] = "group/does-not-exist"
+(tmp/"bad.json").write_text(json.dumps(d))
 PY
-python3 -I scripts/validate.py "$TMP/good-effort.json" "$TMP/known.json" >/dev/null
-ok "effort-suffixed member accepted"
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: unknown group ref accepted"; exit 1; fi
+ok "unknown group ref rejected"
 
-# 14. 仓库密钥扫描（全量逐字节、多编码，无文件豁免）
+# 14. 反向：自包含（组嵌套环）必须 FAIL，且输出 cycle 诊断、不崩溃
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-code"]["members"].append("group/g-code")
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+OUT="$(python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" 2>&1)" && { echo "FAIL: self-inclusion accepted"; exit 1; }
+if ! grep -q "cycle" <<< "$OUT"; then echo "FAIL: cycle not diagnosed: $OUT"; exit 1; fi
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: validator crashed on cycle"; exit 1; fi
+ok "self-inclusion rejected with cycle diagnosis (no crash)"
+
+# 15. 反向：classifier 模型进【本组】路由成员必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["auto"]["members"].append("acme/judge")
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: classifier-as-member accepted"; exit 1; fi
+ok "classifier-as-routing-member rejected"
+
+# 16. 反向：classifier 模型进【另一子组】成员必须 FAIL（跨组守卫，两层主架构）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-code"]["members"].append("acme/judge")
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: cross-group classifier accepted"; exit 1; fi
+ok "cross-group classifier-as-member rejected"
+
+# 17. 反向：规则 use 指向非成员模型必须 FAIL（magpie 强制成员资格）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-code"]["rules"] = [{"use": "acme/long-reader"}]
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: non-member use accepted"; exit 1; fi
+ok "non-member rule target rejected"
+
+# 18. 反向：错误 effort 后缀 ultra（应为 minimal；非法后缀→未知模型）必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["members"][0] = "acme/lite-chat:ultra"
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: ultra effort accepted"; exit 1; fi
+ok "invalid effort suffix rejected"
+
+# 19. 反向：非法 routing 模式必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["auto"]["routing"] = "bogus"
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: bogus routing accepted"; exit 1; fi
+ok "invalid routing mode rejected"
+
+# 20. 反向：非法 affinity 值必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["auto"]["affinity"] = "bogus"
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: bogus affinity accepted"; exit 1; fi
+ok "invalid affinity rejected"
+
+# 21. 反向：非法 useEffort 必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+d["groups"][0]["rules"][1]["useEffort"] = "bogus"
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: bogus useEffort accepted"; exit 1; fi
+ok "invalid useEffort rejected"
+
+# 22. 反向：意图规则缺 classifier 必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; del g["auto"]["classifier"]
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: intent without classifier accepted"; exit 1; fi
+ok "intent rules without classifier rejected"
+
+# 23. 反向：CLI 旗标名当 JSON 字段（except-folders）必须 FAIL（真实 JSON 名 exceptFolders）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "except-folders": ["/x"]}]
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: CLI flag name accepted as JSON field"; exit 1; fi
+ok "CLI-flag-name field rejected (JSON uses exceptFolders)"
+
+# 24. 反向：布尔 intentSure 必须 FAIL（数值字段不接受 bool）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["auto"]["intentSure"] = True
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: bool intentSure accepted"; exit 1; fi
+ok "boolean numeric field rejected"
+
+# 25. 反向：where 为字符串（应为 {field,op,value} 数组）必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "where": "tokens < 20k"}]
+(tmp/"bad.json").write_text(json.dumps(d))
+PY
+if python3 -I scripts/validate.py "$TMP/bad.json" "$TMP/known.json" >/dev/null 2>&1; then echo "FAIL: string where accepted"; exit 1; fi
+ok "malformed where rejected"
+
+# 26. 正例：minimal 强度成员必须 PASS
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["members"][0] = "acme/lite-chat:minimal"
+(tmp/"good.json").write_text(json.dumps(d))
+PY
+python3 -I scripts/validate.py "$TMP/good.json" "$TMP/known.json" >/dev/null
+ok "minimal-effort member accepted"
+
+# 27. 正例：tokens 条件（合法 JSON 字段，非密钥）必须 PASS
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "tokens": 200000}]
+(tmp/"good.json").write_text(json.dumps(d))
+PY
+python3 -I scripts/validate.py "$TMP/good.json" "$TMP/known.json" >/dev/null
+ok "tokens condition accepted (not secret)"
+
+# 28. 正例：exceptFolders（驼峰 JSON 名）必须 PASS
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "exceptFolders": ["/x"]}]
+(tmp/"good.json").write_text(json.dumps(d))
+PY
+python3 -I scripts/validate.py "$TMP/good.json" "$TMP/known.json" >/dev/null
+ok "exceptFolders accepted"
+
+# 29. 正例：where 条件数组（CLI when= 的 JSON 形态）必须 PASS
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "where": [{"field": "tokens", "op": "lt", "value": "20k"}]}]
+(tmp/"good.json").write_text(json.dumps(d))
+PY
+python3 -I scripts/validate.py "$TMP/good.json" "$TMP/known.json" >/dev/null
+ok "where condition array accepted"
+
+# 30. 正例：time 对象（{from,to,days,zone}，CLI time=/days=/tz= 的 JSON 形态）必须 PASS
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "time": {"from": "09:00", "to": "18:00", "days": ["mon"], "zone": "Asia/Shanghai"}}]
+(tmp/"good.json").write_text(json.dumps(d))
+PY
+python3 -I scripts/validate.py "$TMP/good.json" "$TMP/known.json" >/dev/null
+ok "time object accepted"
+
+# 31. 正例：pause 规则（use=<model> + pause:true）必须 PASS
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); d = json.loads((tmp/"rendered.json").read_text())
+g = {x["id"]: x for x in d["groups"]}; g["g-light"]["rules"] = [{"use": "acme/lite-chat", "pause": True}]
+(tmp/"good.json").write_text(json.dumps(d))
+PY
+python3 -I scripts/validate.py "$TMP/good.json" "$TMP/known.json" >/dev/null
+ok "pause rule (use + pause:true) accepted"
+
+# 32. 仓库密钥扫描（全量逐字节、多编码，无文件豁免）
 python3 -I <<'PY'
 import re
 from pathlib import Path
@@ -192,7 +369,7 @@ print("repo secret scan clean")
 PY
 ok "secret scan passed"
 
-# 15. 文档围栏与 README 链接
+# 33. 文档围栏与 README 链接（含 README.zh.md）
 python3 -I <<'PY'
 import re
 from pathlib import Path

@@ -1,74 +1,131 @@
 {
   "groups": [
     {
-      "id": "coder",
-      "name": "编码主路由",
+      "id": "auto",
+      "name": "主路由（意图分发）",
+      "note": "只做意图判断再分发到子组；默认走成员顺序第一位 g-code",
+      "classifier": "acme/judge",
+      "routing": "order",
       "members": [
-        "acme/lite-chat",
-        "acme/code-standard",
-        "acme/strong-reasoner",
-        "acme/vision-designer"
+        "group/g-code",
+        "group/g-test",
+        "group/g-light",
+        "group/g-heavy",
+        "group/g-arch",
+        "group/g-ui",
+        "group/g-review",
+        "group/g-compact"
       ],
-      "classifier": "acme/lite-chat",
       "rules": [
         {
-          "use": "acme/code-standard",
-          "more": ["acme/strong-reasoner"],
+          "use": "group/g-compact",
+          "compact": true
+        },
+        {
+          "use": "group/g-test",
           "intent": "写测试或修失败的测试"
         },
         {
-          "use": "acme/lite-chat",
+          "use": "group/g-light",
           "intent": "简单问答、查文档或命令"
         },
         {
-          "use": "acme/code-standard",
-          "more": ["acme/strong-reasoner"],
+          "use": "group/g-code",
           "intent": "实现新功能或修局部 bug"
         },
         {
-          "use": "acme/strong-reasoner",
-          "more": ["acme/code-standard"],
+          "use": "group/g-heavy",
           "intent": "重构、迁移或跨文件大改动"
         },
         {
-          "use": "acme/strong-reasoner",
-          "effort": "on",
+          "use": "group/g-arch",
           "intent": "架构设计、方案选型或疑难排查"
         },
         {
-          "use": "acme/vision-designer",
-          "more": ["acme/code-standard"],
-          "intent": "前端界面、样式或视觉还原（含截图）"
+          "use": "group/g-ui",
+          "intent": "前端界面设计或还原截图"
         },
         {
-          "use": "acme/code-standard",
-          "more": ["acme/strong-reasoner"],
+          "use": "group/g-review",
           "intent": "审查代码或 review 改动"
         },
         {
-          "use": "acme/strong-reasoner",
+          "use": "group/g-heavy",
           "effort": "on"
-        },
-        {
-          "use": "acme/lite-chat",
-          "compact": true
         }
       ]
     },
     {
-      "id": "compact",
+      "id": "g-compact",
       "name": "长上下文摘要",
       "note": "摘要只要长上下文、快、便宜",
+      "routing": "order",
       "members": [
-        "acme/long-reader",
-        "acme/lite-chat"
-      ],
-      "rules": [
-        {
-          "use": "acme/long-reader",
-          "more": ["acme/lite-chat"],
-          "compact": true
-        }
+        "acme/long-reader:low",
+        "acme/lite-chat:low"
+      ]
+    },
+    {
+      "id": "g-test",
+      "name": "测试",
+      "routing": "usage",
+      "members": [
+        "acme/code-standard:high"
+      ]
+    },
+    {
+      "id": "g-light",
+      "name": "轻量问答",
+      "routing": "usage",
+      "members": [
+        "acme/lite-chat:low"
+      ]
+    },
+    {
+      "id": "g-code",
+      "name": "日常编码（默认）",
+      "routing": "order",
+      "members": [
+        "acme/code-standard:high",
+        "acme/lite-chat:medium"
+      ]
+    },
+    {
+      "id": "g-heavy",
+      "name": "重构/大改动",
+      "note": "通用强模型在前保护旗舰额度；额度充裕可对调",
+      "routing": "order",
+      "members": [
+        "acme/code-standard:high",
+        "acme/strong-reasoner:high"
+      ]
+    },
+    {
+      "id": "g-arch",
+      "name": "架构/疑难",
+      "routing": "order",
+      "members": [
+        "acme/strong-reasoner:max",
+        "acme/code-standard:xhigh"
+      ]
+    },
+    {
+      "id": "g-ui",
+      "name": "前端设计",
+      "routing": "order",
+      "members": [
+        "acme/vision-designer:medium",
+        "acme/code-standard:medium"
+      ]
+    },
+    {
+      "id": "g-review",
+      "name": "代码审查",
+      "note": "刻意选与写代码不同的模型家族，视角不同",
+      "routing": "order",
+      "members": [
+        "acme/code-standard:medium",
+        "acme/lite-chat:high"
       ]
     }
   ]
