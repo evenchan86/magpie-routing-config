@@ -11,7 +11,7 @@
 ## 核心架构：两层意图分发
 
 - **主路由 `auto`**：`classifier`（小而快的意图判断模型）判断每回合意图，规则 `use=group/<id>` 分发到任务子组；自身不做模型选择。无意图命中时按组 routing 模式兜底（`auto` 用 `order`，故首位 `group/g-code`）。
-- **8 个任务子组**：`g-compact`/`g-test`/`g-light`/`g-code`/`g-heavy`/`g-arch`/`g-ui`/`g-review`，各自管理成员（`角色:强度`）与 `routing`（`order` 有序故障转移 / `usage` 额度分摊）。
+- **8 个任务子组**：`g-compact`/`g-test`/`g-light`/`g-code`/`g-heavy`/`g-arch`/`g-ui`/`g-review`，各自管理**多个模型成员**（`模型:强度`，由角色列表展开）与 `routing`（`order` 有序故障转移 / `usage` 额度分摊）。
 - **classifier 独立**：意图判断模型（角色 `intent/judge`）**只**做分类，**绝不**进任何组的成员/规则目标/兜底。这是硬约束。
 
 ## 工作流（按序执行）
@@ -39,18 +39,26 @@
    "
    ```
 
-3. **映射**：按 `templates/roles.json` 的启发式给出「角色 → 本机模型」建议（6 角色，含独立的 `intent/judge`），**必须经使用者确认**后填入 mapping。不要替使用者拍板模型选择。`intent/judge` 选一个小而快、不带推理的模型，且不得与任何路由角色复用同一模型。
-4. **渲染**：用确认的 mapping 替换 `templates/groups.template.json` 中的 `<role:xxx>` 占位（含 `:effort` 后缀），产出两层路由层草案（主路由 `auto` + 8 子组）。使用者可增删意图、角色或子组。
+3. **映射**：按 `templates/roles.json` 的启发式给出「角色 → 本机模型」建议（6 角色，含独立的 `intent/judge`），**必须经使用者确认**后填入 mapping。mapping 值是**有序模型列表**（主模型在前，可多个做故障转移/池；元素为 base 引用 `provider/model`，可含 `#account` 通道，不含 `:effort`）。不要替使用者拍板模型选择。`intent/judge` 选一个小而快、不带推理的模型（列表首元素作 classifier），且不得与任何路由角色复用同一模型。
+4. **渲染**：用 `scripts/render.py` 把确认的 mapping 展开进 `templates/groups.template.json`——模板成员 `<role:xxx>:强度` 展开为该角色**所有模型各带该强度**（多模型子组），`classifier` 取 `intent/judge` 列表首元素，产出两层路由层草案（主路由 `auto` + 8 子组）：
+
+   ```bash
+   python3 -I scripts/render.py templates/groups.template.json <mapping.json> <草案.json>
+   ```
+
+   同一角色槽的强度施加到该角色所有模型；组内重叠模型自动精确去重（保序）；需逐模型不同强度时渲染后手动微调。使用者可增删意图、角色或子组。
 5. **校验**：生成已知模型清单（脱敏）并对草案执行完整校验，必须通过：
 
    ```bash
    python3 -I -c "
    import json
    d=json.load(open('$HOME/.config/magpie/providers.json'))
-   print(json.dumps(sorted({m for p in d.get('providers',[]) for m in p.get('models',[])})))
+   print(json.dumps(sorted({(m if '/' in m else p.get('id','')+'/'+m) for p in d.get('providers',[]) for m in (p.get('models') or [])})))
    " > /tmp/known-models.json
    python3 -I scripts/validate.py <草案.json> /tmp/known-models.json
    ```
+
+   **已知清单须为 `provider/model` 引用**：真实 magpie 的 `models` 数组存**裸名**（如 `cn:glm-5.3`、`k3.1-pro`），而 mapping/成员引用是 `provider/model`，故按供应商 id 拼前缀；模型名已含 `/` 的保持原样（兼容 demo 夹具）。直接取裸名会让校验器把所有引用判为 unknown。
 
    校验覆盖：字段白名单（rule 字段以 JSON 为准）、无占位残留、无密钥、模型引用已知（含 classifier）、组引用存在/禁自包含/嵌套深度≤8、**classifier 跨组分离守卫**（classifier 模型不得进任何路由组的成员/规则目标）、规则 use/more 须为本组成员、每条规则有 `use`、**每组 members 非空**（默认兜底按组 routing 模式，不强制 `compact:true`）、routing/affinity/effort 枚举、where/time/exceptFolders 等类型结构。
 6. **应用（合并语义明确）**：
@@ -75,8 +83,9 @@
 - `docs/concepts.md`：两层路由、池路由 vs 故障转移、compact vs 默认兜底、classifier 独立、affinity 粘性、配置与日志区分。
 - `docs/schema.md`：字段参考（逐字段标来源与校验状态）、routing 12 模式（含 manual）/ affinity 5 值语义、member 写法、组嵌套、待验证清单。
 - `docs/patterns.md`：两层意图分发主模式 + 子组池模式 + 每模型强度 + 多通道额度分摊。
-- `templates/roles.json`：6 个模型角色与映射启发式（含独立 `intent/judge`）。
-- `examples/demo/`：虚构供应商的两层完整走通示例。
+- `templates/roles.json`：6 个模型角色与映射启发式（含独立 `intent/judge`）；mapping 为「角色 → 有序模型列表」。
+- `scripts/render.py`：把角色列表映射展开进模板（成员多模型展开 + classifier 取首元素）。
+- `examples/demo/`：虚构供应商的两层完整走通示例（含多模型子组）。
 
 ## 本仓库自身的开发命令
 

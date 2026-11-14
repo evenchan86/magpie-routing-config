@@ -8,7 +8,9 @@
       "key": "acme-demo-key-fictional",
       "models": [
         "acme/strong-reasoner",
+        "acme/reasoner-backup",
         "acme/code-standard",
+        "acme/code-backup",
         "acme/vision-designer",
         "acme/lite-chat",
         "acme/long-reader",

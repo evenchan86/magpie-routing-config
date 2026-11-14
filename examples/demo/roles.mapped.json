@@ -1,8 +1,8 @@
 {
-  "intent/judge": "acme/judge",
-  "reasoning/strong": "acme/strong-reasoner",
-  "code/general": "acme/code-standard",
-  "design/ui": "acme/vision-designer",
-  "fast/cheap": "acme/lite-chat",
-  "context/long": "acme/long-reader"
+  "intent/judge": ["acme/judge"],
+  "reasoning/strong": ["acme/strong-reasoner", "acme/reasoner-backup"],
+  "code/general": ["acme/code-standard", "acme/code-backup"],
+  "design/ui": ["acme/vision-designer"],
+  "fast/cheap": ["acme/lite-chat"],
+  "context/long": ["acme/long-reader"]
 }

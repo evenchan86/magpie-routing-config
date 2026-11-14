@@ -1,9 +1,9 @@
 {
-  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。intent/judge 是意图判断专用角色——只填 group.classifier，绝不进路由成员/规则目标/兜底，与 fast/cheap 路由角色分离。",
+  "description": "模型角色定义。角色与供应商解耦：agent 按 hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。mapping 值是【有序模型列表】（主模型在前，可多个做故障转移/池）；元素为 base 引用 provider/model（可含 #account 通道，不含 :effort，强度由模板成员后缀施加）。渲染时模板成员 <role:X>:effort 展开为该角色所有模型各带 :effort（scripts/render.py，组内重叠模型精确去重保序）。intent/judge 是意图判断专用角色——只填 group.classifier（取列表首元素），绝不进路由成员/规则目标/兜底，与 fast/cheap 路由角色分离。",
   "roles": {
     "intent/judge": {
       "purpose": "意图判断（classifier 专用）：每回合判断请求意图，不回答请求",
-      "hints": "便宜、快、不带推理的判断模型（如 typesafe/jev）；magpie 自动用最低档。绝不作为路由成员/规则目标/兜底"
+      "hints": "便宜、快、不带推理的判断模型（如虚构示例 acme/judge）；magpie 自动用最低档。绝不作为路由成员/规则目标/兜底"
     },
     "reasoning/strong": {
       "purpose": "架构设计、方案选型、疑难排查、跨文件大改动",

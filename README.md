@@ -20,7 +20,7 @@ Then tell your agent (Claude Code / Codex / …):
 
 > Read this repo's AGENTS.md and configure my local magpie routing following the workflow.
 
-The agent will: probe your local config schema → discover your providers and models → propose a role→model mapping (**you confirm**) → render a two-layer routing draft → validate → back up and merge-write (**you confirm**).
+The agent will: probe your local config schema → discover your providers and models → propose a role→ordered-model-list mapping (**you confirm**) → render a two-layer routing draft → validate → back up and merge-write (**you confirm**).
 
 Your providers and keys **stay untouched**; this repo only touches the routing layer (groups/rules/classifier).
 
@@ -29,13 +29,13 @@ Your providers and keys **stay untouched**; this repo only touches the routing l
 Routing is split into two layers so intent judgment and model selection stay separate:
 
 - **Main router (`auto`)** — a small fast **classifier** judges the intent of each turn, then dispatches to a task subgroup via `use=group/<id>`. It does no model selection itself. When no intent matches, it falls back to its first member (the everyday-coding subgroup).
-- **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning its members and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix.
+- **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning **multiple model members** and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix. A role maps to an ordered model list, so each subgroup can hold several models (e.g. a primary coder → a backup coder → a cheap fallback).
 
 The classifier is a **separate role**: it only judges intent and is **never** a routing member, rule target, or fallback.
 
 ## Model roles
 
-Strategies aren't bound to specific models. Six capability roles are mapped to your own models:
+Strategies aren't bound to specific models. Six capability roles are mapped to **ordered lists of your own models** (primary first; multiple models give failover or quota pools). `scripts/render.py` expands each template member `<role:X>:effort` into every model in that role's list, each carrying the same effort:
 
 | Role | Purpose |
 |---|---|
@@ -61,6 +61,7 @@ templates/
   groups.template.json     # two-layer routing template (role placeholders)
 examples/demo/             # end-to-end example with a fictional provider
 scripts/
+  render.py                # expand role->model-list mapping into the template (multi-model subgroups)
   validate.py              # routing-layer draft validator (group refs, classifier separation)
   e2e.sh                   # isolated acceptance test
 ```

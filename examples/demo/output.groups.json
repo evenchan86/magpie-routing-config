@@ -70,7 +70,8 @@
       "name": "测试",
       "routing": "usage",
       "members": [
-        "acme/code-standard:high"
+        "acme/code-standard:high",
+        "acme/code-backup:high"
       ]
     },
     {
@@ -87,6 +88,7 @@
       "routing": "order",
       "members": [
         "acme/code-standard:high",
+        "acme/code-backup:high",
         "acme/lite-chat:medium"
       ]
     },
@@ -97,7 +99,9 @@
       "routing": "order",
       "members": [
         "acme/code-standard:high",
-        "acme/strong-reasoner:high"
+        "acme/code-backup:high",
+        "acme/strong-reasoner:high",
+        "acme/reasoner-backup:high"
       ]
     },
     {
@@ -106,7 +110,9 @@
       "routing": "order",
       "members": [
         "acme/strong-reasoner:max",
-        "acme/code-standard:xhigh"
+        "acme/reasoner-backup:max",
+        "acme/code-standard:xhigh",
+        "acme/code-backup:xhigh"
       ]
     },
     {
@@ -115,7 +121,8 @@
       "routing": "order",
       "members": [
         "acme/vision-designer:medium",
-        "acme/code-standard:medium"
+        "acme/code-standard:medium",
+        "acme/code-backup:medium"
       ]
     },
     {
@@ -125,6 +132,7 @@
       "routing": "order",
       "members": [
         "acme/code-standard:medium",
+        "acme/code-backup:medium",
         "acme/lite-chat:high"
       ]
     }

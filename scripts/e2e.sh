@@ -14,18 +14,9 @@ mkdir -p "$FAKE_HOME/.config/magpie"
 cp examples/demo/input.providers.json "$FAKE_HOME/.config/magpie/providers.json"
 [ -f "$FAKE_HOME/.config/magpie/providers.json" ] && ok "isolated fake HOME fixture"
 
-# 2. 渲染：模板 + 映射 -> 产物（模拟 agent 占位替换，含 :effort 后缀）
-python3 -I - "$TMP" <<'PY'
-import json, sys
-from pathlib import Path
-root = Path.cwd(); tmp = Path(sys.argv[1])
-tpl = (root/"templates/groups.template.json").read_text()
-mapping = json.loads((root/"examples/demo/roles.mapped.json").read_text())
-for role, model in mapping.items():
-    tpl = tpl.replace(f"<role:{role}>", model)
-(tmp/"rendered.json").write_text(tpl)
-PY
-ok "template renders with role mapping"
+# 2. 渲染：render.py 把模板成员 <role:X>:强度 按映射【有序列表】展开（多模型子组）
+python3 -I scripts/render.py templates/groups.template.json examples/demo/roles.mapped.json "$TMP/rendered.json" >/dev/null
+ok "template renders with role->list mapping (render.py)"
 
 # 3. 渲染产物与 demo 输出一致
 python3 -I - "$TMP" <<'PY'
@@ -391,5 +382,152 @@ for name in ("README.md", "README.zh.md"):
 print("docs fences and README links ok")
 PY
 ok "docs fences and README links"
+
+# 34. 正例：多模型展开不变量（demo 映射无角色重叠，故每组成员数 = 各角色槽列表长度之和；classifier=首元素；重叠去重见 #38）
+python3 -I - "$TMP" <<'PY'
+import json, re, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); root = Path.cwd()
+tpl = json.loads((root/"templates/groups.template.json").read_text())
+mapping = json.loads((root/"examples/demo/roles.mapped.json").read_text())
+rendered = {g["id"]: g for g in json.loads((tmp/"rendered.json").read_text())["groups"]}
+role_re = re.compile(r"<role:([^>]+)>(.*)")
+for tg in tpl["groups"]:
+    rg = rendered[tg["id"]]
+    expected = 0
+    for member in tg.get("members", []):
+        m = role_re.fullmatch(member)
+        expected += len(mapping[m.group(1)]) if m else 1
+    assert len(rg["members"]) == expected, f"{tg['id']}: member count {len(rg['members'])} != {expected}"
+    cls = tg.get("classifier")
+    if isinstance(cls, str) and role_re.fullmatch(cls):
+        assert rg["classifier"] == mapping[role_re.fullmatch(cls).group(1)][0], f"{tg['id']}: classifier != first list element"
+# 具体同构断言：g-code 三模型有序链（code/general 2 个 + fast/cheap 1 个）
+assert rendered["g-code"]["members"] == ["acme/code-standard:high", "acme/code-backup:high", "acme/lite-chat:medium"], rendered["g-code"]["members"]
+assert rendered["auto"]["classifier"] == "acme/judge"
+PY
+ok "multi-model expansion invariant (count = sum of list lengths; classifier = first)"
+
+# 35. 反向：render.py 缺映射角色必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+del m["code/general"]
+(tmp/"bad-map.json").write_text(json.dumps(m))
+PY
+OUT="$(python3 -I scripts/render.py templates/groups.template.json "$TMP/bad-map.json" "$TMP/bad-out.json" 2>&1)" && { echo "FAIL: unmapped role accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: render crashed on unmapped role: $OUT"; exit 1; fi
+ok "render rejects unmapped role (clean FAIL, no crash)"
+
+# 36. 反向：render.py 空列表映射必须 FAIL
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = []
+(tmp/"bad-map.json").write_text(json.dumps(m))
+PY
+OUT="$(python3 -I scripts/render.py templates/groups.template.json "$TMP/bad-map.json" "$TMP/bad-out.json" 2>&1)" && { echo "FAIL: empty list accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: render crashed on empty list: $OUT"; exit 1; fi
+ok "render rejects empty model list (clean FAIL, no crash)"
+
+# 37. 反向：render.py 旧的单模型字符串映射必须 FAIL（须为有序列表）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = "acme/code-standard"
+(tmp/"bad-map.json").write_text(json.dumps(m))
+PY
+OUT="$(python3 -I scripts/render.py templates/groups.template.json "$TMP/bad-map.json" "$TMP/bad-out.json" 2>&1)" && { echo "FAIL: string mapping accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: render crashed on string mapping: $OUT"; exit 1; fi
+ok "render rejects non-list (legacy string) mapping (clean FAIL, no crash)"
+
+# 38. 正例：角色列表重叠时组内精确去重（保序）——g-compact 的 context/long 与 fast/cheap 共享模型不产生重复成员
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["context/long"] = ["acme/lite-chat"]  # 与 fast/cheap 首元素重叠
+(tmp/"overlap-map.json").write_text(json.dumps(m))
+PY
+python3 -I scripts/render.py templates/groups.template.json "$TMP/overlap-map.json" "$TMP/overlap-out.json" >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"overlap-out.json").read_text())["groups"]}
+mem = g["g-compact"]["members"]
+assert mem == ["acme/lite-chat:low"], mem  # context/long:low + fast/cheap:low 去重后只剩一个
+for grp in g.values():
+    ms = grp.get("members", [])
+    assert len(ms) == len(set(ms)), f"duplicate members in {grp['id']}: {ms}"
+PY
+ok "overlapping role lists deduped within group (order preserved)"
+
+# 39. 反向：mapping 列表含非字符串元素必须干净 FAIL（不崩溃，有明确诊断）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = [123]
+(tmp/"bad-map.json").write_text(json.dumps(m))
+PY
+OUT="$(python3 -I scripts/render.py templates/groups.template.json "$TMP/bad-map.json" "$TMP/bad-out.json" 2>&1)" && { echo "FAIL: non-string element accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: render crashed on non-string element: $OUT"; exit 1; fi
+if ! grep -q "non-empty model string" <<< "$OUT"; then echo "FAIL: missing clean diagnostic: $OUT"; exit 1; fi
+ok "render rejects non-string element (clean FAIL, no crash)"
+
+# 40. 反向：mapping 元素带强度后缀必须 FAIL（render 期明确诊断，而非下游 unknown ref）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["code/general"] = ["acme/code-standard:high"]
+(tmp/"bad-map.json").write_text(json.dumps(m))
+PY
+OUT="$(python3 -I scripts/render.py templates/groups.template.json "$TMP/bad-map.json" "$TMP/bad-out.json" 2>&1)" && { echo "FAIL: effort-suffixed mapping element accepted"; exit 1; }
+if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: render crashed on effort suffix: $OUT"; exit 1; fi
+if ! grep -q "强度后缀" <<< "$OUT"; then echo "FAIL: missing effort-suffix diagnostic: $OUT"; exit 1; fi
+ok "render rejects effort-suffixed mapping element (clear diagnostic)"
+
+# 41. 正例：多元素 intent/judge 列表 → classifier 取首元素（变异 ms[-1] 会被此断言抓住）
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1]); m = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+m["intent/judge"] = ["acme/judge", "acme/lite-chat"]
+(tmp/"multi-judge-map.json").write_text(json.dumps(m))
+PY
+python3 -I scripts/render.py templates/groups.template.json "$TMP/multi-judge-map.json" "$TMP/multi-judge-out.json" >/dev/null
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+g = {x["id"]: x for x in json.loads((tmp/"multi-judge-out.json").read_text())["groups"]}
+assert g["auto"]["classifier"] == "acme/judge", g["auto"]["classifier"]
+PY
+python3 -I scripts/validate.py "$TMP/multi-judge-out.json" "$TMP/known.json" >/dev/null
+ok "multi-element judge list: classifier = first element"
+
+# 42. 正例：真实 magpie 裸名格式 → 拼前缀 known 校验 PASS（裸名 known 必 FAIL）；含冒号裸名不被强度守卫误伤
+python3 -I - "$TMP" <<'PY'
+import json, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+bare = {"providers": [{"id": "prov", "models": ["cn:coder-a", "coder-b", "judge-x"]}], "groups": []}
+mapping = {"intent/judge": ["prov/judge-x"], "reasoning/strong": ["prov/cn:coder-a"],
+           "code/general": ["prov/cn:coder-a", "prov/coder-b"], "design/ui": ["prov/cn:coder-a"],
+           "fast/cheap": ["prov/coder-b"], "context/long": ["prov/coder-b"]}
+(tmp/"bare-map.json").write_text(json.dumps(mapping))
+known = sorted({(m if "/" in m else "prov/"+m) for m in bare["providers"][0]["models"]})
+(tmp/"bare-known.json").write_text(json.dumps(known))
+(tmp/"bare-known-raw.json").write_text(json.dumps(sorted(bare["providers"][0]["models"])))
+PY
+python3 -I scripts/render.py templates/groups.template.json "$TMP/bare-map.json" "$TMP/bare-rendered.json" >/dev/null
+python3 -I scripts/validate.py "$TMP/bare-rendered.json" "$TMP/bare-known.json" >/dev/null
+if python3 -I scripts/validate.py "$TMP/bare-rendered.json" "$TMP/bare-known-raw.json" >/dev/null 2>&1; then echo "FAIL: bare-name known accepted (should need prefix)"; exit 1; fi
+ok "real bare-name format: prefixed known PASS, raw known FAIL (colon name preserved)"
 
 echo "E2E PASS: ${CHECKS} checks"
