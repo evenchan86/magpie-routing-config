@@ -18,7 +18,8 @@
 | `id` | string | 组标识；agent 以 `group/<id>` 引用 | 实测 | 语义校验（必填、唯一） |
 | `name` | string | 显示名 | 实测 | 类型/结构校验（string） |
 | `note` | string | 备注 | 实测 | 类型/结构校验（string） |
-| `members` | string[] | 成员清单，写法见下节；可为模型引用、`group/<id>`、glob/re: 模式 | 实测+CLI | 语义校验（组引用解析、模型引用已知；**所有组** members 必须非空） |
+| `members` | string[] \| null | **命名**成员清单，写法见下节；可为模型引用或 `group/<id>`。**glob/re: 模式不放这里**，放 `match` | 实测 | 语义校验（组引用解析、模型引用已知；`members` 与 `match` 不能同时为空；模式写进 members 报错） |
+| `match` | string[] | **模式**成员（glob / `re:`），与 `members` 并列的独立数组；pattern-only 组的 `members` 落盘为 `null` | 实测 | 类型校验（非空字符串数组）；模式展开不做校验 |
 | `rules` | rule[] | 有序规则，首条命中生效 | 实测 | 语义校验（见 rule 字段） |
 | `classifier` | string | 意图判断模型 `provider/model` 或 `group/<id>`，见下文 classifier 节 | 实测+CLI | 语义校验（分离守卫） |
 | `routing` | string | 池路由模式，**12 值（含 `manual`）**，默认 `smart`，见下表 | 实测+CLI | 语义校验（枚举） |
@@ -29,11 +30,27 @@
 | `levels` | string[] | 提供给 agent 的推理档位 | 实测 | 语义校验（档位集合） |
 | `effort` | string | `agent`（默认）= 每个请求按 agent 要求的强度推理，但以成员自身 `:<effort>` 为限；`auto` = classifier 每回合选强度（需 classifier） | CLI | 语义校验（auto\|agent 枚举；auto 需 classifier） |
 | `disabled` | bool | 停用该组 | 实测 | 类型/结构校验（bool） |
-| `hidden` | bool | 隐藏 | 实测 | 仅白名单放行 |
-| `unlists` | bool | 不列出 | 实测 | 仅白名单放行 |
-| `weight` / `fast` / `ultra` / `pick` / `listed` / `family` | —（值形态待核） | JSON 字段名经二进制确证全部存在。CLI 语义：`weight=<model>=<n>` 为 routing=weight 的权重份额（1–1000，未指定默认 1）；`fast`/`ultra` 为按厂商 fast/Ultrafast 模式发送的模型清单；`pick=<model>` 为手动路由目标（routing=manual）；`listed=no` 让模型不进 agent 可见清单、只经组提供；`family` 为家族标签 | CLI+实测（二进制） | 仅白名单放行（`family` 做 string 类型检查） |
+| `hidden` | bool | 隐藏。**`true` + `members:null` + `name:""` 是 magpie 的「墓碑」**：`magpie group rm <auto-组>` 移除一个自动发现的组时落盘这个形态，用来「保持已移除」（CLI 回显 `magpie found it, so it's hidden`，`magpie group restore auto` 可恢复）。**不是坏配置**，工具豁免其成员非空要求 | 实测 | 白名单放行；墓碑豁免空成员检查 |
+| `unlists` | bool | `true` = 该组模型不进 agent 可见清单、只经组提供（CLI `listed=no`）。`listed=yes` 是**删除该键**，不是写 `false` | 实测 | 类型校验（bool） |
+| `weights` | object | routing=weight 的权重份额：**键 = 完整成员引用（含 `:effort`）**，值 = 整数 1–1000，未列出的成员默认 1。CLI 旗标是 `weight=<model>=<n>`；非成员键 CLI 硬报错、JSON 路径静默忽略。**范围是 CLI 写入约束**：手写 2000 或 0，magpie 读路径照常生效（实测显示 `weight 2000`），但此后对该组的任何 `group set` 都会被拒（`a member's weight is 1 to 1000`）——所以工具仍按 1..1000 判失败 | 实测 | 语义校验（键须为本组成员、值为 1..1000 整数、排除 bool；含 `match` 的组豁免成员资格） |
+| `fast` / `ultra` | string[] | 按厂商 fast / Ultrafast 模式发送的模型清单。**元素 = 完整成员引用（含 `:effort`）**，与 `weights` 同规矩；裸 `provider/model` 在 JSON 路径被**静默忽略**，CLI 路径则硬报错 `... is not in the group`。设 `ultra` 会自动把该模型补进 `fast` | 实测 | 语义校验（元素须为本组成员） |
+| `pick` | string | 手动路由目标（**单个完整成员引用，含 `:effort`**）。CLI 设 `pick=` 会**自动把 routing 改成 `manual`**；之后改走 routing，`pick` 键仍残留。非成员/裸引用同上：CLI 硬报错、JSON 静默忽略 | 实测 | 语义校验（须为本组成员） |
+| `family` | string | 家族标签（自由文本） | 实测 | 类型校验（string） |
 
-顶层 `noAutoGroups`：语义待核，仅文档（不在工具白名单），不进模板。供应商的 `key`/`keys`/endpoint：**永不涉及**（红线，供应商段只探测引用、不生成不修改）。
+**CLI 旗标 ≠ JSON 字段名**（写错会被 magpie **静默忽略**，不报错）：
+
+| CLI 旗标 | JSON 真键名 | 值形态 |
+|---|---|---|
+| `weight=<model>=<n>` | **`weights`** | 对象映射，键含 `:effort` |
+| `listed=no` | **`unlists`** | 布尔 `true` |
+
+把单数 `weight` 或 `listed` 写进 JSON 一律无效（实测：权重全为 1、清单行为不变）。校验器会明确拒绝这两个名字并指出真键名。
+
+**键名错 vs 类型错，后果完全不同**（实测 magpie 0.1.4130）：
+- **键名写错** → 静默忽略该字段，其余照常。
+- **类型写错**（如 `fast` 给字符串而非数组） → **整份 providers.json 解析失败**：magpie 报 `providers.json ... can't be read (it doesn't parse)`，有 `.bak` 时回退到备份内容、没有则当空配置。**CLI 退出码仍是 0**——必须读消息，不能只看退出码。所以校验器对类型从严。
+
+顶层 `noAutoGroups`：**布尔 `true` = 关闭 magpie 自动发现的组**（形如 `auto-<model>`），自建/改过的组不受影响（实测：`magpie group auto off` 落盘 `{"noAutoGroups": true}` 且 `auto-` 组从清单消失；`auto on` **删除该键**）。不在工具白名单（工具只校验 groups），不进模板。供应商的 `key`/`keys`/endpoint：**永不涉及**（红线，供应商段只探测引用、不生成不修改）。
 
 ## rule 字段
 
@@ -51,7 +68,7 @@
 | `time` | object | 时间窗 `{from:"HH:MM", to:"HH:MM", days:["mon",…], zone:"IANA"}`：轮开始时刻落在窗内；可跨午夜；zone 缺省用本机时区；只给 days 则全天有效。**不是字符串** | 实测+CLI | 类型/结构校验（对象） |
 | `folders` | string[] | agent 工作目录是这些目录之一或其子目录；未告知目录的请求不匹配任何 folder | CLI | 类型/结构校验（数组） |
 | `exceptFolders` | string[] | 工作目录不在这些目录及其子目录内（**驼峰**，CLI `except-folders`）；未告知目录的请求视为满足 | 实测+CLI | 类型/结构校验（数组） |
-| `where` | object[] | 条件数组 `[{field,op,value}]`，可多条且须全满足，见下节「where 条件」 | 实测+CLI | 类型/结构校验（`{field,op,value}` 数组） |
+| `where` | object[] | 条件数组 `[{field,op,value}]`，可多条且须全满足；**`subagent` 条件无 `value` 键**，见下节「where 条件」 | 实测+CLI | 类型/结构校验（`{field,op}` 必需，`value` 除 subagent 外必需） |
 | `pause` | bool | `true` = 暂停规则：条件持有期间 `use` 里的模型被排除出组——不发任何请求，即使其他成员失败或会话原本在它上面也不接管；条件仅限 time/days/agents/folders/exceptFolders 与 agent 条件（CLI） | 实测+CLI | 类型/结构校验（仅 true） |
 
 ### CLI 旗标 ≠ JSON 字段（写进 JSON 会被静默忽略）
@@ -75,11 +92,14 @@
 ```json
 [
   { "field": "tokens", "op": "lt", "value": "20000" },
-  { "field": "message", "op": "contains", "value": "run the tests" }
+  { "field": "message", "op": "contains", "value": "run the tests" },
+  { "field": "subagent", "op": "is" }
 ]
 ```
 
-分别对应 CLI `when="tokens < 20k"` 与 `when="message contains run the tests"`（注意 `20k` 展开为 `"20000"`，value 一律字符串）。各 field 的比较方式（CLI 口径）：tokens 长度比较（`>= > < <=`）；effort `is`/`is not`（off/on/档位）或档位比较；agent `is`/`is not`（可逗号分隔多个）；subagent 是否子代理请求（Claude Code/Codex 可识别，其他 agent 的子代理按非子代理计）；message 轮开始时用户的话（`contains`/`does not contain`/`starts with`/`matches` 正则，不区分大小写）；system 对系统提示的任一块、last 对最后一条用户消息，比较方式同 message。op 全集与 CLI `>=`/`is not` 等对应的 JSON op 名未逐一实测，以本机实测为准。
+分别对应 CLI `when="tokens < 20k"`、`when="message contains run the tests"`、`when="subagent is reviewer"`（注意 `20k` 展开为 `"20000"`，value 一律字符串）。
+
+**`subagent` 条件没有 `value` 键**（实测：magpie 落盘就是 `{"field":"subagent","op":"is"}`，magpie 自己正常解析回显）。校验器对 `field=="subagent"` 允许缺 `value`，其余 field 仍要求三键齐全——把三键一律当必需会误拒 magpie 自己写出的配置。各 field 的比较方式（CLI 口径）：tokens 长度比较（`>= > < <=`）；effort `is`/`is not`（off/on/档位）或档位比较；agent `is`/`is not`（可逗号分隔多个）；subagent 是否子代理请求（Claude Code/Codex 可识别，其他 agent 的子代理按非子代理计）；message 轮开始时用户的话（`contains`/`does not contain`/`starts with`/`matches` 正则，不区分大小写）；system 对系统提示的任一块、last 对最后一条用户消息，比较方式同 message。op 全集与 CLI `>=`/`is not` 等对应的 JSON op 名未逐一实测，以本机实测为准。
 
 ### magpie 原生强制（实测）
 
@@ -93,13 +113,53 @@
 来源：实测+CLI（嵌套部分另见官方文档「路由组里放路由组」）。
 
 - `provider/model`：标准引用。裸名仅当唯一供应商提供该模型时可用。
-- `:effort`：固定成员强度，集合 **`none/minimal/low/medium/high/xhigh/max`**。（旧文档的 `ultra` 是错的，且缺 `minimal`，已修正。）
+- `:effort`：固定成员强度，集合 **`none/minimal/low/medium/high/xhigh/max`**。（旧文档的 `ultra` 是错的，且缺 `minimal`，已修正。）**可省略**——省略即按**组的 `effort`** 推理（`agent` 默认＝按 agent 要求的强度；`auto`＝classifier 每回合选的强度），CLI 帮助原文 `without one it reasons as the group's effort says`。同组内可混「带后缀」与「不带后缀」的成员（真实配置实测）。
+- `:fast`：**CLI 输入糖**，不是持久化形态——`models=<m>:high:fast` 落盘为 `members:["<m>:high"]` + `fast:["<m>:high"]`（实测）。手写 `members:["<m>:fast"]` 会被当字面 id 跳过，要表达 fast 模式请用 `fast` 数组。
 - `:low+high`：多级写法。`:fast`：厂商快速模式。`#account`：钉绑账号/key。
 - 同一模型两个强度 = 两个成员（如 `acme/code-standard:low` 与 `acme/code-standard:high`）。
 - `group/<id>`：嵌套子组，规则见下节。
-- glob / `re:` 模式：按模式匹配模型；**pattern 不匹配组**。模式匹配工具暂不校验。
+- glob / `re:` 模式：**写在独立的 `match` 数组里，不是 `members`**（见下节）。
 
 工具校验模型引用时剥 `:effort`/`:fast`/`#account` 后缀比对已知模型清单，组引用单独解析。边界：若某模型真实名字恰以档位词结尾，剥后缀可能误判——罕见，遇到时以本机实测为准。
+
+**真实配置里的空值**（实测 magpie 0.1.4130）：magpie 自建/被移除的组（形如 `auto-<model>`）落盘时 `members` 是 **`null`**；`rules` 则通常**整个键省略**（实测一台机器 12 组：`members:null` 2 个、`rules:null` **0** 个、`rules` 键缺失 11 个；删掉最后一条规则也是删键而非置 null）。pattern-only 组的 `members` 同样是 `null`。
+
+读配置的工具必须把这几种都按「空」处理而不是直接取长度，否则会崩。本仓库：`validate.py` 对 `members:null` 按空处理，`members` 与 `match` 皆空时报 `needs members or match`——但 **`hidden:true` 的墓碑豁免**（那是 magpie 有意保留的「保持已移除」状态，见 group 字段表）；`rules:null` 报 `rules: must be list`；`doctor.py` 按 0 计数照常诊断。
+
+真正需要清理的是**既不 hidden 又空**的组（留着当兜底会路由不到任何模型）；`auto-` 墓碑不要删，删了 magpie 会把自动组重新发现出来。
+
+### 模式成员（`match`，已实测确证）
+
+模式**不在 `members` 里**，而是与它并列的独立数组 `match`。magpie 自己写出来的形态：
+
+```jsonc
+{"id": "pat", "members": null, "match": ["acme/*"]}                    // 纯模式组
+{"id": "mix", "members": ["acme/judge"], "match": ["acme/*"]}          // 命名 + 模式
+```
+
+**手写模式进 `members` 不生效**：`{"members": ["acme/*"]}` 会被当成字面模型 id，`magpie group <id>` 显示 `not served now, skipped`。校验器会直接报错拦住这种写法。
+
+语法与匹配语义（magpie 0.1.4130 实测，CLI 展开计数 + 落盘 JSON 双证）：
+
+| 写法 | 行为 |
+|---|---|
+| `acme/*` | glob 通配符就是 `*` |
+| `*-chat` | **跨供应商**匹配（不限于某个 provider） |
+| `ACME/*` | glob **大小写不敏感** |
+| `acme*chat` | `*` **跨 `/`**（不局限于单段） |
+| `re:acme/.*` | `re:` 后是完整正则 |
+| `re:lite-chat` | **匹配 0 个**——匹配对象是 `provider/model` **全 id**，不是裸名 |
+| `re:acme` | **匹配 0 个**——全 id **锚定**，不是部分匹配 |
+| `re:ACME/.*` | `re:` 默认**大小写不敏感** |
+| `re:(?-i)ACME/.*` | `(?-i)` 开启大小写敏感 → 匹配 0 个 |
+| `group/*` | **匹配 0 个**——模式不匹配组 |
+
+顺序与去重：命名成员在前（保序），模式命中的模型按 `magpie models` 顺序追加；同一模型不重复。`models+=<pattern>` / `models-=<pattern>` 增删的是 `match` 元素，不动 `members`。
+
+**局限（工具与本文档都不覆盖）**：
+- 校验器**不展开模式**，所以「模式是否把 classifier 模型拉进了路由组」查不出来。`acme/*` 这类宽模式会连 classifier 模型一起匹配进来，与 classifier 分离原则冲突——用窄模式，或把 classifier 放在**独立供应商**（真实配置就是这么做的）。
+- 同理，组含 `match` 时，`weights`/`fast`/`ultra`/`pick` 的元素**可以引用模式展开出来的模型**（magpie 接受，实测），校验器此时只查「模型已知」，不做成员资格判定；无模式的组才严格查成员资格。
+- 模式展开后的成员如何参与实际路由**未实测**（需起 gateway 发请求）。
 
 ### 组嵌套（组中组，已证实）
 
@@ -123,7 +183,7 @@
 | `weight` | 按权重比例分配、均匀穿插（权重 3 每拿 3 个，权重 1 拿 1 个）；休息中的成员退出本轮、下一成员兜底；权重经 group `weight` 设置（值形态待核） | 官方文档+CLI |
 | `fast` | 最近回答最快（首字时间/输出速度）的成员优先；相差不到一成保持原序 | 官方文档 |
 | `cheap` | 此刻最便宜的成员优先（每百万 token 价格 × 倍率，含高峰计价）；仅限路由组 | 官方文档 |
-| `free` | CLI/二进制有该值，语义待核 | CLI+实测（二进制） |
+| `free` | **Free first**：先把「算作免费」的供应商/模型花掉，再动付费的。哪些算免费由**供应商级** `countFree`（CLI `magpie provider set <id> free=yes`）标记；价格与 Usage 成本仍按原值显示。`free` 也是供应商级 routing 值之一 | 实测（落盘 `countFree:true` + 厂商自述帮助文本）；运行时选路未实测 |
 | `expiring` | 免费额度优先、最先到期的先用；免费额度用尽才用付费 | CLI |
 | `manual` | 只路由到你选定的模型（`pick=<model>`，或在组卡片上点选）；其他成员与规则等待，直到另选或改路由，**不做故障转移** | CLI |
 
@@ -168,6 +228,29 @@
 - **magpie 原生强制（实测）**：一个组的成员要么全是 decision model（分类器），要么全是会话模型，不能混，否则 magpie 拒绝保存。这是组级的原生分离强制，与工具的跨组分离守卫互补。
 - 选模型建议：小而快、不带推理（官方文档）。它与 fast/cheap 路由角色是两回事——后者是正常路由成员，承担轻量任务与兜底。
 
+### classifier 只在有「消费者」时才落盘（实测，CLI 写入路径）
+
+组里必须有**消费者**——至少一条 `intent` 规则，**或** `effort:"auto"`——classifier 才会被写进配置：
+
+| 操作 | 结果 |
+|---|---|
+| `group add g models=… classifier=<m>`（无消费者） | exit 0、无任何报错，**classifier 被静默丢弃** |
+| `group set g classifier=<m>`（无消费者） | 同上，静默丢弃 |
+| `group add/set g effort=auto classifier=<m>` | **落盘**（参数顺序无关） |
+| `group rule add g use=… intent=… classifier=<m>` | **落盘** |
+| 组已有 intent 规则时 `group set g classifier=<m>` | **落盘** |
+
+反向缺 classifier 是**硬报错**（exit 1），不是静默：
+- `effort=auto` 单给 → `effort picked per turn needs the group's classifier: …`
+- intent 规则不带 classifier → `a rule with an intent needs the group's classifier, …: add classifier=<model>, best a small fast one`
+- `group rule classifier <g> <m>` 而组无 intent 规则 → `<g> has no rule with an intent to classify for`
+
+**消费者消失时 classifier 被一并删除**：删掉唯一的 intent 规则、或把 `effort` 从 `auto` 改回 `agent`，`classifier` 键随之消失（实测）。
+
+CLI 命令名注意：是 **`magpie group rule add …`**，没有顶层 `magpie rule add`（后者报 `unknown agent "rule"`）。`classifier=group/<id>` 可用，但写入时校验目标组存在。
+
+> 以上是 **CLI 写入路径**的行为。手写 JSON 里「有 classifier 但无消费者」会怎样**未实测**，故校验器不对此报错——但按上表，这种配置在 magpie 侧没有意义，别这么写。
+
 ## 待验证清单
 
 **已解决**（原清单移除）：
@@ -184,12 +267,33 @@
 10. ~~组级 `effort:"agent"` 语义~~ → CLI 已定义：每个请求按 agent 要求的强度推理，但以成员自身 `:<effort>` 为限（默认 `agent`）。
 11. ~~`manual` 模式~~ → routing 12 值含 `manual`，经 `pick=<model>` 使用。
 12. ~~默认兜底~~ → 纠正：按组 routing 模式路由，不是普适的成员顺序/首成员。
+13. ~~组级 `weight`/`fast`/`ultra`/`pick`/`listed`/`family` 的值形态~~ → **反转**：`weight`/`listed` 不是 JSON 字段名，真键名是 `weights`（成员引用→1..1000 整数映射，键含 `:effort`）与 `unlists`（bool）；`fast`/`ultra` 是字符串数组、`pick`/`family` 是字符串。写路径落盘 + 读路径回显双向实测。
+14. ~~routing `free` 语义~~ → Free first（先花 `countFree` 标记的免费额度），见 routing 表。
+15. ~~顶层 `noAutoGroups`~~ → 布尔 `true` 关闭自动发现的组，自建组不受影响；`group auto on` 删除该键。
+16. ~~glob/re: 语法~~ → 全部确证，且**模式在独立的 `match` 数组**而非 `members`，见「模式成员」节。
+17. ~~classifier 的 CLI 写入条件~~ → 需消费者（intent 规则或 `effort:"auto"`），否则静默丢弃；反向缺失硬报错，见 classifier 节。
+18. ~~成员 `:fast` 后缀 vs `fast` 数组~~ → `:fast` 是 **CLI 输入糖**，写入时规范化进 `fast` 数组；手写进 members 不生效（实测）。运行时等价性仍未测。
+19. ~~`fast`/`ultra`/`pick` 是否要求元素为本组成员~~ → **要求**，且与 `weights` 同规矩：完整成员引用（含 `:effort`），CLI 非成员硬报错、JSON 路径静默忽略（实测）。
 
 **仍待核**（agent 不要当作已支持特性写进配置）：
 
-1. 组级 `weight`/`fast`/`ultra`/`pick`/`listed`/`family` 的 JSON **值形态**（字段名已二进制确证；CLI 语义见 group 字段表）。
-2. routing `free` 的语义（存在已确证）。
-3. 顶层 `noAutoGroups` 的准确语义。
-4. glob/re: 模式的语法细节（工具暂不校验）。
+1. **模式展开后的运行时路由行为**：`match` 命中的模型如何参与实际选路未实测（需起 gateway 发请求）。语法与展开计数已确证。
+2. **`free` / `expiring` 的运行时选路**：语义已确证（厂商自述 + `countFree` 落盘），实际发请求时的选择顺序未实测。
+3. **`:fast` 与 `fast` 数组的运行时等价性**：写入路径的规范化已确证，发请求时是否完全等价未测。
+4. **手写 JSON 里「classifier 无消费者」**：CLI 写入路径会丢弃；手写的会被 magpie **读路径保留并显示**，但是否真被采纳未实测——校验器因此不对此报错。
 
 若你的实测回答了其中任何一项，欢迎补充本文档（标注你的 magpie 版本与证据）。
+
+## 实测方法：假 HOME 不足以隔离（重要）
+
+本机若正跑着 magpie app，**只设 `HOME=<临时目录>` 不能隔离**：CLI 按默认端口探测活实例，会连上**真实** gateway 并可能改到真实配置。实测：假 HOME 下 `magpie status --json` 仍返回真实进程的 `running:true` 与 pid。
+
+安全探针三件套：
+
+```bash
+FAKE=$(mktemp -d); mkdir -p "$FAKE/.config/magpie"   # 放虚构 providers.json（模型用裸名）
+export HOME="$FAKE" MAGPIE_ADDR=127.0.0.1:1          # 死端口 → 强制纯文件模式
+magpie status --json                                 # 必须断言 running:false 才继续
+```
+
+（也可用 `sandbox-exec -n no-network` 从网络层切断。）本仓库 `scripts/e2e.sh` 只用假 HOME 夹具跑自家 python 脚本、**不调用真实二进制**，因此不受此影响；若将来加真实二进制用例，必须补上 `MAGPIE_ADDR` 与 `running:false` 断言。

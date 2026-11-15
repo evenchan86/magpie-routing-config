@@ -157,6 +157,36 @@
 }
 ```
 
+## 真实案例（脱敏）：一台机器上的两层配置长什么样
+
+下面的结构取自一台真实机器的 magpie 配置（magpie 0.1.4130），**供应商与模型名已全部替换为虚构 `acme/*`**，只保留结构与强度。它比模板多一个子组，正好说明模板是起点不是上限。
+
+| 组 | routing | 成员（强度） | 说明 |
+|---|---|---|---|
+| `auto` | `order` | 9 个 `group/*` | 网关；classifier 为 `acme/judge`（独立供应商） |
+| `g-compact` | `order` | `lite-chat:low` | 压缩只需便宜模型 |
+| `g-test` | `usage` | 4 个模型，全 `:high` | 模型可互换 → 摊额度 |
+| `g-light` | `usage` | `lite-chat:low` + 2 个**无后缀**成员 | 强度可省略 |
+| `g-code` | `order` | `code-standard:high`, `code-backup:high` | 有明确主力 → 故障转移 |
+| `g-heavy` | `order` | `code-standard:high`, `strong-reasoner:high` | |
+| `g-arch` | `order` | `strong-reasoner:max`, `code-standard:xhigh` | 同一模型在此升到 `xhigh` |
+| `g-ui` | `order` | `vision-designer:high`, `code-standard:medium` | 同组混强度 |
+| `g-review` | `order` | 3 个模型，全 `:high` | 刻意换家族做交叉审查 |
+| `g-docs` | `order` | `code-standard:medium` + 2 个 `:high` | **模板外新增**：写文档/教材意图 |
+
+网关 10 条规则：`compact:true` 第 1 条 → 8 条意图（含新增的「撰写文档、教材或知识库文章」）→ `effort:"on"` 末条升 `g-heavy`。
+
+**从这份真实配置能读出的 6 条经验**：
+
+1. **强度是「任务 × 模型」的函数，不是模型固有属性**。主力编码模型在 `g-code`/`g-review` 是 `:high`、`g-arch` 是 `:xhigh`、`g-ui`/`g-docs` 是 `:medium`；轻量模型在压缩/轻量组是 `:low`、在测试/审查组是 `:high`。这正是 `@effort` 覆写 + 字面量逃生口要表达的东西——把强度写死在角色上就表达不了。
+2. **`usage` 只给「成员可互换」的组**。真实配置里只有测试与轻量两组用 `usage`（模型多、质量相近、摊额度有意义），其余全 `order`（有明确主力，要的是故障转移）。给有主力的组用 `usage` 会把请求分给次选模型。
+3. **classifier 分离做到供应商级更干净**。这台机器的 classifier 来自一个**与所有路由成员都不同**的供应商：判断请求不消耗任何路由池的额度，限流也互不牵连。模型级分离是底线，供应商级是加分。
+4. **成员可以不带 `:effort`**。`g-light` 里两个成员无后缀，与 `:low` 成员并列——省略即按**组的 `effort`** 推理（`agent` 默认＝agent 要求的强度，`auto`＝classifier 每回合选），不是必须每个成员都标。
+5. **子组数量按需增删**。真实配置有 9 个子组（多了文档写作意图）。加一个子组 = 模板里加一组 + 网关加一条意图规则 + 网关 members 加一个 `group/<id>`，三处都要改（漏改 members 会让规则指向非成员而被 magpie 拒绝保存）。
+6. **组 id 别叫 `group`**。这台机器那个文档组的 id 真的就是 `group`（上表为可读性改写成 `g-docs`），成员引用写成 `group/group`——合法但极易读错。统一 `g-` 前缀。
+
+另外：这份配置**所有组都没设 `affinity`**。粘性是可选优化，不是两层架构的必需件。
+
 ## 通用模式（旧 7 个，按官方口径校正）
 
 ### 6. 意图分层路由（单层变体）

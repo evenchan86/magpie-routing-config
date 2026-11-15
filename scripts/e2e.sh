@@ -835,23 +835,88 @@ for name, mut in MUT.items():
 PY
 ok "post-write on-disk guard catches corrupted writes and auto-restores (mutation probe)"
 
-# 58. 真实 magpie 形态：自建空组的 members/rules 为 null，doctor/apply 不得崩溃
-#     （本机实测踩到：len(None) 让 doctor 在真实配置上 traceback）
+# 58. 空值容忍：magpie 自建/被移除组的 members 为 null（实测），rules 常整个键省略；
+#     另外手写 rules:null 也要干净报错而非崩溃（本机实测 len(None) 曾让 doctor traceback）
 python3 -I - "$TMP" <<'PY'
 import json, sys
 from pathlib import Path
 tmp = Path(sys.argv[1])
 base = json.loads(Path("examples/demo/input.providers.json").read_text())
-base["groups"] = [{"id": "auto-legacy", "routing": "order", "members": None, "rules": None}]
+base["groups"] = [{"id": "auto-legacy", "routing": "order", "members": None, "rules": None},
+                  {"id": "auto-nokey", "routing": "order", "members": None}]
 (tmp/"null-members.json").write_text(json.dumps(base))
 PY
 OUT="$(python3 -I scripts/doctor.py "$TMP/null-members.json" 2>&1)"
 if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: doctor crashed on null members: $OUT"; exit 1; fi
 grep -q "members=0" <<< "$OUT"
-grep -q "must be list" <<< "$OUT"
+grep -q "needs members or match" <<< "$OUT"
+grep -q "rules: must be list" <<< "$OUT"
 OUT="$(python3 -I scripts/apply.py "$TMP/ref-draft.json" "$TMP/null-members.json" 2>&1)" && { echo "FAIL: null-members group passed validation"; exit 1; }
 if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: apply crashed on null members: $OUT"; exit 1; fi
 grep -q "nothing merged" <<< "$OUT"
 ok "doctor/apply tolerate real magpie null members/rules (no crash, honest findings)"
+
+# 59. 组级真键名（实测反转）：weights/unlists/match 放行；CLI 旗标名 weight/listed 明确拒绝
+python3 -I - "$TMP" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+known = tmp/"k59.json"
+known.write_text(json.dumps(["acme/lite-chat", "acme/code-standard", "acme/judge"]))
+def run(groups):
+    gp = tmp/"g59.json"; gp.write_text(json.dumps({"groups": groups}))
+    p = subprocess.run([sys.executable, "-I", "scripts/validate.py", str(gp), str(known)],
+                       capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr
+base = {"id": "x", "members": ["acme/lite-chat", "acme/code-standard"]}
+# 正例：magpie 真实落盘形态
+good = [
+    ("weights+unlists+fast+pick+family", {**base, "routing": "weight",
+     "weights": {"acme/code-standard": 7}, "unlists": True, "fast": ["acme/lite-chat"],
+     "pick": "acme/lite-chat", "family": "fam"}),
+    ("pattern-only (members:null + match)", {"id": "p", "members": None, "match": ["acme/*"]}),
+    ("named + match", {**base, "match": ["re:acme/.*"]}),
+    ("weights key with :effort", {"id": "p", "members": ["acme/code-standard:high"],
+     "weights": {"acme/code-standard:high": 4}}),
+    # 模式组：weights/fast/pick 可引用【模式展开出来的】模型（magpie 接受，实测）——不得误拒
+    ("pattern group + weights/fast/pick on expanded model",
+     {"id": "p", "members": None, "match": ["acme/*"], "weights": {"acme/code-standard": 5},
+      "fast": ["acme/code-standard"], "pick": "acme/code-standard"}),
+    # hidden 墓碑：magpie `group rm` 自动发现组后有意保留的状态（实测），不是坏配置
+    ("hidden tombstone", {"id": "auto-lite-chat", "name": "", "members": None, "hidden": True}),
+    # subagent 条件天然无 value（magpie 落盘形态，实测）
+    ("where subagent without value",
+     {"id": "p", "members": ["acme/lite-chat"],
+      "rules": [{"use": "acme/lite-chat", "tokens": 1,
+                 "where": [{"field": "subagent", "op": "is"}]}]}),
+]
+for label, g in good:
+    rc, out = run([g])
+    assert rc == 0, f"valid shape rejected ({label}): {out}"
+# 反例：已实测无效/危险
+bad = [
+    ("weight 单数键", {**base, "weight": {"acme/lite-chat": 5}}, "CLI flag"),
+    ("listed 键", {**base, "listed": False}, "CLI flag"),
+    ("模式写进 members", {"id": "p", "members": ["acme/*"]}, "belongs in 'match'"),
+    ("members 与 match 皆空", {"id": "p", "members": [], "match": []}, "needs members or match"),
+    ("weights 非成员键", {**base, "weights": {"acme/judge": 5}}, "not a member"),
+    ("weights 值 1001", {**base, "weights": {"acme/lite-chat": 1001}}, "1..1000"),
+    ("weights 值 bool", {**base, "weights": {"acme/lite-chat": True}}, "1..1000"),
+    ("fast 给字符串", {**base, "fast": "acme/lite-chat"}, "list of model ref"),
+    ("unlists 给字符串", {**base, "unlists": "no"}, "must be bool"),
+    ("pick 给数组", {**base, "pick": ["acme/lite-chat"]}, "single model ref"),
+    ("match 给字符串", {"id": "p", "match": "acme/*"}, "list of non-empty pattern"),
+    ("fast 非成员", {**base, "fast": ["acme/judge"]}, "not a member"),
+    ("ultra 非成员", {**base, "ultra": ["acme/judge"]}, "not a member"),
+    ("pick 非成员", {**base, "pick": "acme/judge"}, "not a member"),
+    ("fast 裸引用而成员带 :effort",
+     {"id": "p", "members": ["acme/code-standard:high"], "fast": ["acme/code-standard"]}, "not a member"),
+]
+for label, g, needle in bad:
+    rc, out = run([g])
+    assert rc != 0, f"invalid shape accepted ({label})"
+    assert needle in out, f"missing diagnostic for {label}: {out}"
+PY
+ok "group real key names: weights/unlists/match accepted, CLI weight/listed rejected"
 
 echo "E2E PASS: ${CHECKS} checks"

@@ -58,7 +58,7 @@
    python3 -I scripts/validate.py <草案.json> /tmp/known-models.json
    ```
 
-   **已知清单须为 `provider/model` 引用**：真实 magpie 的 `models` 数组存**裸名**（如 `cn:glm-5.3`、`k3.1-pro`），而 mapping/成员引用是 `provider/model`，故按供应商 id 拼前缀；模型名已含 `/` 的保持原样（兼容 demo 夹具）。直接取裸名会让校验器把所有引用判为 unknown。
+   **已知清单须为 `provider/model` 引用**：真实 magpie 的 `models` 数组存**裸名**（可能带冒号，如虚构示例 `cn:coder-a`、`coder-b`），而 mapping/成员引用是 `provider/model`，故按供应商 id 拼前缀；模型名已含 `/` 的保持原样（兼容 demo 夹具）。直接取裸名会让校验器把所有引用判为 unknown。
 
    校验覆盖：字段白名单（rule 字段以 JSON 为准）、无占位残留、无密钥、模型引用已知（含 classifier）、组引用存在/禁自包含/嵌套深度≤8、**classifier 跨组分离守卫**（classifier 模型不得进任何路由组的成员/规则目标）、规则 use/more 须为本组成员、每条规则有 `use`、**每组 members 非空**（默认兜底按组 routing 模式，不强制 `compact:true`）、routing/affinity/effort 枚举、where/time/exceptFolders 等类型结构。
 6. **应用（用 `scripts/apply.py`，合并语义明确）**：
@@ -75,6 +75,9 @@
 - 永不把密钥写入本仓库或任何输出；示例一律使用虚构供应商与虚构密钥。
 - **classifier 分离**：意图判断模型（`intent/judge`）只做意图判断，绝不进路由成员/规则目标/兜底。
 - 配置 schema 用 `intent` / `effort:"on"` / `compact:true` / `more` / `where:[{field,op,value}]`。**rule 字段名以 JSON 为准**（`where`、`time` 对象、`exceptFolders` 驼峰）；CLI 旗标名 `when`/`tz`/`days`/`except-folders`/`at` 不是 JSON 字段（写进 JSON 会被 magpie 静默忽略）；**不要**把运行时日志里的 `n`/`held`/`classified`/`when` 当配置写法。
+- **组级同理**：CLI `weight=`/`listed=` 的 JSON 真键名是 **`weights`**（成员引用→1..1000 整数，键含 `:effort`）与 **`unlists`**（bool）；glob/`re:` 模式写进独立的 **`match`** 数组，**不是 `members`**（写进 members 会被当字面模型 id 跳过）。键名错→静默忽略；**类型错→整份 providers.json 解析失败且 CLI 退出码仍 0**。
+- **classifier 需要消费者**：组里至少一条 `intent` 规则或 `effort:"auto"`，否则 CLI 的 `classifier=` 被静默丢弃；有消费者却缺 classifier 则硬报错。宽模式（`match:["acme/*"]`）会把 classifier 模型拉进路由组，校验器查不出——用窄模式或让 classifier 用独立供应商。
+- **实测本机 magpie 二进制时必须真隔离**：只设 `HOME` 不够（CLI 按端口连活实例，会改到真实配置）。加 `MAGPIE_ADDR=127.0.0.1:1` 并先断言 `magpie status --json` 的 `running` 为 `false`；方法见 `docs/schema.md` 末节。
 - 默认兜底按**组的 routing 模式**（未命中规则→照组本来方式路由：`order` 首成员优先、`usage` 按额度分摊），不是 `compact:true`；`compact:true` 只是压缩触发条件。
 - `affinity`、规则/成员指向组（`group/<id>`）均已实测支持；其余未验证项见 `docs/schema.md` 待验证清单——不要当作已支持特性写进配置。
 

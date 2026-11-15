@@ -36,4 +36,4 @@ affinity.json
 
 # Internal development process (kept local; not part of the public product)
 docs/superpowers/
-tasks/
+/tasks/

@@ -23,7 +23,7 @@ EFFORT_SUFFIXES = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}  
 
 def has_effort_suffix(ref):
     """base 引用是否带可剥的 :effort 后缀。镜像 validate.py base_model 的判定：
-    只把「后缀全是已知强度」当强度，避免误伤 cn:glm-5.3 这类含冒号的真实模型名。"""
+    只把「后缀全是已知强度」当强度，避免误伤 prov/cn:coder-a 这类含冒号的模型名。"""
     core = ref.split("#", 1)[0]
     if core.endswith(":fast"):
         core = core[:-5]

@@ -9,6 +9,12 @@
 - rule `where`（CLI when=）= [{field, op, value}]；`time`（CLI time=/days=/tz=）= {from,to,days,zone} 对象。
 - `exceptFolders`（CLI except-folders=）驼峰；`pause`（CLI pause=<model>）= true 布尔，模型在 use。
 - `at`/rule 级 `classifier=` 是 CLI 便利写法（插入位置/设组级 classifier），非 rule JSON 字段。
+- 组级 `weight=`/`listed=` 同样是 CLI 旗标：JSON 真键名是 `weights`（成员引用→整数 1..1000 的映射，
+  键含 `:effort`）与 `unlists`（布尔 true）。写单数 `weight`/`listed` 进 JSON 会被静默忽略。
+- glob/`re:` 模式放在**独立的 `match` 数组**，不在 `members`；pattern-only 组的 `members` 落盘为 null。
+  手写模式进 `members` 会被当字面模型 id 跳过（实测 magpie 0.1.4130）。
+- 键名写错→静默忽略；**类型写错→整份 providers.json 解析失败**（magpie 报 doesn't parse，退出码仍 0），
+  故本校验器对字段类型从严。
 """
 import json
 import re
@@ -17,10 +23,12 @@ from pathlib import Path
 
 TOP_FIELDS = {"groups"}
 GROUP_FIELDS = {
-    "id", "name", "members", "rules", "classifier", "routing", "affinity",
+    "id", "name", "members", "match", "rules", "classifier", "routing", "affinity",
     "intentSure", "context", "compact", "levels", "effort", "disabled",
-    "hidden", "unlists", "note", "weight", "fast", "ultra", "pick", "listed", "family",
+    "hidden", "unlists", "note", "weights", "fast", "ultra", "pick", "family",
 }
+# CLI 旗标名 → JSON 真键名（实测：写左边的名字进 JSON 会被 magpie 静默忽略）
+GROUP_CLI_ONLY = {"weight": "weights", "listed": "unlists"}
 # rule JSON 字段（实测）：不含 CLI 旗标名 when/tz/days/except-folders/at/classifier
 RULE_FIELDS = {
     "use", "more", "intent", "effort", "compact", "useEffort", "tokens",
@@ -138,7 +146,10 @@ def main():
             fail(errors, f"{gp}: must be object")
             continue
         for key in group:
-            if key not in GROUP_FIELDS:
+            if key in GROUP_CLI_ONLY:
+                fail(errors, f"{gp}: {key!r} is a CLI flag, not a JSON field"
+                             f" (use {GROUP_CLI_ONLY[key]!r}; magpie silently ignores {key!r})")
+            elif key not in GROUP_FIELDS:
                 fail(errors, f"{gp}: unknown field {key!r}")
             if SECRET_FIELD.search(key):
                 fail(errors, f"{gp}: secret-like field {key!r}")
@@ -180,15 +191,66 @@ def main():
             if not isinstance(lv, list) or not all(x in MEMBER_EFFORT for x in lv):
                 fail(errors, f"{gp}.levels: must be list of effort levels")
 
-        members = group.get("members", [])
+        # 类型写错会让 magpie 整份 providers.json 解析失败（不是忽略该字段），故类型必须严格
+        if "unlists" in group and not isinstance(group["unlists"], bool):
+            fail(errors, f"{gp}.unlists: must be bool (CLI listed=no → unlists:true)")
+
+        members = group.get("members")
+        if members is None:
+            members = []          # pattern-only 组落盘时 members 为 null（实测）
         if not isinstance(members, list):
             fail(errors, f"{gp}.members: must be list")
             members = []
-        if not members:
-            fail(errors, f"{gp}.members: must be non-empty (default routing uses the group's routing mode)")
+        match = group.get("match")
+        if match is None:
+            match = []
+        if not isinstance(match, list) or not all(isinstance(x, str) and x for x in match):
+            fail(errors, f"{gp}.match: must be a list of non-empty pattern strings")
+            match = []
+        # hidden 墓碑是 magpie 有意保留的状态：`group rm` 一个自动发现的组会落盘
+        # {"id":"auto-x","name":"","members":null,"hidden":true}（实测），不是坏配置
+        if not members and not match and not group.get("hidden"):
+            fail(errors, f"{gp}: needs members or match (default routing uses the group's routing mode)")
+        has_pattern = bool(match)   # 模式在 match 里，不在 members（实测）
+        member_refs = {m for m in members if isinstance(m, str)}
+
+        def check_member_ref(ref, path):
+            """weights/fast/ultra/pick 的元素须为完整成员引用（含 :effort）。
+            实测：非成员或裸引用在 CLI 路径硬报错、JSON 路径静默忽略。
+            但组含模式时，元素可以是**模式展开出来的**模型（magpie 接受，实测），
+            而工具不展开模式，故此时退回「已知模型」检查，不做成员资格判定。"""
+            if has_pattern:
+                check_ref(ref, path, errors)
+            elif not isinstance(ref, str) or ref not in member_refs:
+                fail(errors, f"{path}: {ref!r} is not a member of this group"
+                             " (use the full member ref incl. :effort; magpie ignores others)")
+
+        if "weights" in group:
+            w = group["weights"]
+            if not isinstance(w, dict):
+                fail(errors, f"{gp}.weights: must be an object mapping member ref -> integer 1..1000")
+            else:
+                for k, v in w.items():
+                    check_member_ref(k, f"{gp}.weights key {k!r}")
+                    if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 1000:
+                        fail(errors, f"{gp}.weights[{k!r}]: must be an integer 1..1000"
+                                     " (magpie reads out-of-range values, but every later"
+                                     " `group set` on this group is refused until fixed)")
+        if "pick" in group:
+            if not isinstance(group["pick"], str):
+                fail(errors, f"{gp}.pick: must be a single model ref string")
+            else:
+                check_member_ref(group["pick"], f"{gp}.pick")
+        for fld in ("fast", "ultra"):
+            if fld in group:
+                v = group[fld]
+                if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
+                    fail(errors, f"{gp}.{fld}: must be a list of model ref strings")
+                else:
+                    for xi, x in enumerate(v):
+                        check_member_ref(x, f"{gp}.{fld}[{xi}]")
         member_models = set()
         member_groups = set()
-        has_pattern = False
         for mi, member in enumerate(members):
             mp = f"{gp}.members[{mi}]"
             check_ref(member, mp, errors)
@@ -198,7 +260,8 @@ def main():
                 all_refs[gid].add(ref)
                 member_groups.add(ref)
             elif is_pattern(member):
-                has_pattern = True
+                fail(errors, f"{mp}: pattern belongs in 'match', not 'members'"
+                             " (magpie treats it as a literal model id and skips it)")
             elif isinstance(member, str):
                 member_models.add(base_model(member))
 
@@ -265,8 +328,10 @@ def main():
                 fail(errors, f"{rp}.time: must be object {{from,to,days,zone}} (CLI time=/days=/tz=)")
             if "where" in rule:
                 w = rule["where"]
+                # subagent 条件天然无 value（magpie 落盘 {"field":"subagent","op":"is"}，实测）
                 if not isinstance(w, list) or not all(
-                    isinstance(c, dict) and {"field", "op", "value"} <= set(c) for c in w
+                    isinstance(c, dict) and {"field", "op"} <= set(c)
+                    and ("value" in c or c.get("field") == "subagent") for c in w
                 ):
                     fail(errors, f"{rp}.where: must be list of {{field,op,value}} (CLI when=)")
 

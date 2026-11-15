@@ -72,8 +72,10 @@ def main():
         return 1
     for g in groups:
         cls = g.get("classifier", "-")
-        # members/rules 可能是 null（magpie 自建的空组就是这样），不能 len(None)
-        print(f"  {g.get('id', '?'):<14} routing={g.get('routing', 'smart'):<8} members={len(g.get('members') or [])} classifier={cls}")
+        # members/rules 可能是 null（magpie 自建的空组、pattern-only 组就是这样），不能 len(None)
+        pat = len(g.get("match") or [])
+        extra = f" match={pat}" if pat else ""
+        print(f"  {g.get('id', '?'):<14} routing={g.get('routing', 'smart'):<8} members={len(g.get('members') or [])}{extra} classifier={cls}")
     rc, out = run_validate({"groups": groups}, known)
     print("validation:")
     print(out)

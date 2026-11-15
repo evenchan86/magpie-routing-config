@@ -68,6 +68,8 @@ classifier 只做意图判断，**绝不**进 members / 规则 use / more / 兜�
 - `intentSure`（0..1，默认 0.4）：意图置信阈值。
 - 组级 `effort:"auto"`：由 classifier 每回合选推理强度（需 classifier）——与 classifier 自身调用自动最低档是两回事。
 - 选小而快、不带推理的模型；意图别写太细，保持互斥。
+- **classifier 需要「消费者」才会落盘**（实测）：组里至少一条 `intent` 规则，或 `effort:"auto"`。没有消费者时，CLI 的 `classifier=` 被**静默丢弃**（exit 0，无报错）；反过来有消费者却缺 classifier 是**硬报错**。删掉最后一个消费者，classifier 键也会被一并删除。细节与命令见 [schema.md](schema.md) classifier 节。
+- **宽模式会破坏分离**：`match: ["acme/*"]` 会把同供应商的 classifier 模型一起匹配进路由组。校验器不展开模式、查不出这种冲突——用窄模式，或把 classifier 放在独立供应商。
 
 ## affinity：会话粘性
 
@@ -86,3 +88,9 @@ classifier 只做意图判断，**绝不**进 members / 规则 use / more / 兜�
 - **运行时日志 `when`**：数组（意图/推理的展开）。
 
 把字符串 `when` 写进 JSON 不是合法字段：magpie 静默忽略，本仓库校验器直接拒绝（`when` 不在白名单）；校验器对 `where` 做结构校验（`{field,op,value}` 数组）。模板默认不使用 `where`。
+
+**同一类陷阱在组级也有**（实测）：CLI `weight=<model>=<n>` / `listed=no` 的 JSON 真键名是 **`weights`** / **`unlists`**；glob/`re:` 模式要写进独立的 **`match`** 数组而不是 `members`。写错键名 magpie **静默忽略**，写错类型则**整份配置解析失败**（且 CLI 退出码仍是 0）。详见 [schema.md](schema.md)。
+
+## 实测本机配置时的隔离（重要）
+
+本机若正跑着 magpie app，**只换 `HOME` 不能隔离**——CLI 按默认端口探测活实例，会连上真实 gateway。安全探针要加 `MAGPIE_ADDR=127.0.0.1:1`（死端口）并**先断言 `magpie status --json` 的 `running` 为 `false`** 才继续。完整方法见 [schema.md](schema.md) 末节。本仓库 e2e 不调用真实二进制，只用假 HOME 夹具跑自家脚本。
