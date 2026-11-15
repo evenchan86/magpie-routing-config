@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""提交闸：git commit 前由全局 hook 调用（规则放在仓库里，别的项目不受影响）。
+"""提交闸：把「文档同步」变成 commit 时的硬条件。
 
-挡两类「review 过了但文档没同步就提交」：
-  1. 本批 staged 改动触及脚本公开面，却没有 staged 任何公开文档（也没写 doc-sync 豁免理由）
-  2. 当日 review 档案缺「文档对照」小节（逐文件结论）——等于没做文档同步这一步
+两条规则，按使用者分层：
+  1. 公开面变更必须同批同步公开文档（或写明 doc-sync 豁免理由）——**对任何人都成立**，
+     仓库自带的 `.githooks/pre-commit` 用 `--docs-only` 只跑这一条。
+  2. 当日 review 档案必须有「文档对照」逐文件结论——这是**个人 review 工作流**的留痕要求，
+     档案目录不随仓库分发，外部贡献者没有它。默认模式才查，`--docs-only` 跳过。
 
-只读 git 与仓库文件，不碰任何本机配置。退出码 0=放行，1=拦下（理由打印到 stdout）。
+只读 git 与仓库文件，不碰任何本机配置。退出码 0=放行，1=拦下，2=用法错。
 """
 import re
 import sys
@@ -22,7 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def git(*args):
     import subprocess
-    p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+    # errors="replace"：暂存区里可能有二进制文件（给文档加截图是现实场景），
+    # 严格 UTF-8 解码会 UnicodeDecodeError，贡献者看到的是堆栈而不是可读提示（实测）。
+    p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, errors="replace")
     return p.returncode, p.stdout
 
 
@@ -66,7 +70,15 @@ def _mentioned(body, path, basenames):
     return any(re.search(rf"(?<![\w./-]){p}(?![\w.-])", body) for p in pats)
 
 
-def main():
+def main(argv):
+    args = argv[1:]
+    if "-h" in args or "--help" in args:
+        print("usage: commit-gate.py [--docs-only]")
+        return 0
+    if [a for a in args if a != "--docs-only"]:
+        print("usage: commit-gate.py [--docs-only]")
+        return 2
+    docs_only = "--docs-only" in args
     problems = []
     rc, staged = git("diff", "--cached", "--name-only")
     if rc != 0:
@@ -99,29 +111,30 @@ def main():
             print("commit-gate: 已按 doc-sync 豁免放行："
                   + "；".join(f"{k}: {'/'.join(v)}" for k, v in reasons.items()))
 
-    # 2. review 档案必须有逐文件的文档对照结论
-    body, where = archive_section(docs)
-    if body is None:
-        problems.append(f"文档同步这一步没有留痕：{where}")
-        problems.append("  在当日 review 档案里加「## 文档对照」小节，逐个公开文件写结论（相关/无关 + 依据）")
-    else:
-        # 计数必须消歧：`README.md` 同时也是 examples/demo/README.md 的 basename，
-        # 直接子串匹配会把两者都算进去，「写 2 个名字就满足 ≥3」（实测）
-        basenames = {}
-        for d in docs:
-            basenames.setdefault(Path(d).name, []).append(d)
-        named = {d for d in docs if _mentioned(body, d, basenames)}
-        if len(named) < 3:
-            problems.append(f"「文档对照」小节只提到 {len(named)} 个公开文件（{where}），不足以证明做了全量对照")
-            problems.append("  逐个公开文件写结论，至少覆盖：" + ", ".join(docs[:6]))
+    # 2. review 档案必须有逐文件的文档对照结论（个人工作流层，--docs-only 跳过）
+    if not docs_only:
+        body, where = archive_section(docs)
+        if body is None:
+            problems.append(f"文档同步这一步没有留痕：{where}")
+            problems.append("  在当日 review 档案里加「## 文档对照」小节，逐个公开文件写结论（相关/无关 + 依据）")
+        else:
+            # 计数必须消歧：`README.md` 同时也是 examples/demo/README.md 的 basename，
+            # 直接子串匹配会把两者都算进去，「写 2 个名字就满足 ≥3」（实测）
+            basenames = {}
+            for d in docs:
+                basenames.setdefault(Path(d).name, []).append(d)
+            named = {d for d in docs if _mentioned(body, d, basenames)}
+            if len(named) < 3:
+                problems.append(f"「文档对照」小节只提到 {len(named)} 个公开文件（{where}），不足以证明做了全量对照")
+                problems.append("  逐个公开文件写结论，至少覆盖：" + ", ".join(docs[:6]))
 
     if problems:
         print("❌ 提交闸未通过（文档同步）\n")
         print("\n".join(problems))
         return 1
-    print("commit-gate: 文档同步检查通过")
+    print("commit-gate: 文档同步检查通过" + ("（--docs-only：未查 review 档案）" if docs_only else ""))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))

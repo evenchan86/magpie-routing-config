@@ -1470,4 +1470,81 @@ if rc == 0:                      # 干净克隆/无 git 时跳过：本条只约
 PY
 ok "doc sync gate: public-surface changes need doc updates; all doc commands match script usage"
 
+# 65. 仓库自带 git hook：强制点必须在 git 层，不能靠解析命令字符串。
+# 外部工具 hook 靠 `git\s+commit` 之类的正则认命令，实测 `git -C <path> commit`、
+# `git -c k=v commit`、`git --no-pager commit`、消息里含 `--amend` 四种形态全部绕过，
+# `echo 'git commit'` 反而误拦。git 原生 hook 由 git 自己触发，与命令拼写无关。
+python3 -I - "$ROOT" <<'PY'
+import importlib.util, os, re, stat, subprocess, sys, tempfile
+from pathlib import Path
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("dg", root / "scripts/docgate.py")
+dg = importlib.util.module_from_spec(spec); spec.loader.exec_module(dg)
+
+hook = root / ".githooks/pre-commit"
+assert hook.is_file(), "[65] 缺 .githooks/pre-commit：本仓库的提交闸就没有强制力"
+assert hook.stat().st_mode & stat.S_IXUSR, "[65] .githooks/pre-commit 没有可执行位，git 会静默跳过"
+body = hook.read_text()
+assert "core.hooksPath" in body, "[65] hook 里要写明启用方式（git config core.hooksPath .githooks）"
+m = [l.strip() for l in body.splitlines() if l.strip() and not l.strip().startswith("#")]
+assert len(m) == 1 and m[0].startswith("exec python3 -I scripts/commit-gate.py"), \
+    f"[65] hook 的可执行部分必须只有一条 exec 调用 commit-gate.py: {m}"
+contract = dg.cli_contract((root / "scripts/commit-gate.py").read_text())
+assert contract, "[65] commit-gate.py 没有 usage 行，无法校验 hook 的调用签名"
+flags = m[0].split()[4:]        # exec python3 -I <script> <flags…>；注释里的用法说明不参与
+assert set(flags) <= contract[3], f"[65] hook 用了未声明的旗标: {set(flags) - contract[3]}"
+# 只跑对所有人都成立的那条：档案层不随仓库分发，外部贡献者没有它
+assert "--docs-only" in flags, "[65] 仓库自带 hook 必须用 --docs-only，否则会拦住没有 review 档案的贡献者"
+
+# 真提交验证：各种命令拼写都必须被拦。字符串匹配探针证明不了这件事。
+with tempfile.TemporaryDirectory() as td:
+    work = Path(td) / "repo"
+    subprocess.run(["git", "clone", "-q", str(root), str(work)], check=True)
+    def sync():
+        for rel in ("scripts/commit-gate.py", "scripts/docgate.py", ".githooks/pre-commit"):
+            (work / rel).parent.mkdir(parents=True, exist_ok=True)   # 新文件克隆里没有
+            (work / rel).write_bytes((root / rel).read_bytes())
+        (work / ".githooks/pre-commit").chmod(0o755)
+    sync()
+    def git(*a, **kw):
+        return subprocess.run(["git", *a], cwd=work, capture_output=True, text=True, **kw)
+    git("config", "core.hooksPath", ".githooks")
+    git("config", "user.email", "probe@example.invalid")
+    git("config", "user.name", "probe")
+    # 制造公开面漂移：改 usage 行且不同步任何公开文档
+    p = work / "scripts/doctor.py"
+    src = p.read_text()
+    assert "usage: doctor.py" in src, "[65] doctor.py usage 锚点缺失"
+    p.write_text(src.replace("usage: doctor.py", "usage: doctor.py [--probe-drift]", 1))
+    git("add", "scripts/doctor.py")
+    forms = [
+        ("plain", ["commit", "-m", "probe"]),
+        ("-C 绝对路径", ["-C", str(work), "commit", "-m", "probe"]),
+        ("-c k=v", ["-c", "user.name=probe", "commit", "-m", "probe"]),
+        ("--no-pager", ["--no-pager", "commit", "-m", "probe"]),
+        ("消息含 --amend", ["commit", "-m", "probe --amend handling"]),
+    ]
+    for name, args in forms:
+        r = git(*args)
+        assert r.returncode != 0, f"[65] {name} 绕过了提交闸（真提交实测）"
+        assert "提交闸未通过" in r.stdout + r.stderr, f"[65] {name} 失败原因不是提交闸: {r.stdout + r.stderr}"
+    # --no-verify 是 git 的显式退出通道，拦不住也不该假装拦得住
+    r = git("commit", "--no-verify", "-m", "probe")
+    assert r.returncode == 0, "[65] --no-verify 本应能显式跳过（这是 git 的既定语义）"
+    # 正例：克隆里没有 review 档案（gitignored，不随仓库分发），不碰公开面的提交必须能过。
+    # 少了这条，hook 可能把外部贡献者的每一次提交都挡死而我们看不见。
+    git("reset", "-q", "--hard", "HEAD")
+    sync()   # reset --hard 会把拷进去的已跟踪文件还原成 HEAD 旧版（实测踩过：旧版不认 --docs-only）
+    (work / "README.md").write_text((work / "README.md").read_text() + "\n<!-- probe -->\n")
+    git("add", "README.md")
+    r = git("commit", "-m", "probe: doc-only change")
+    assert r.returncode == 0, f"[65] 不碰公开面的提交被误拦: {r.stdout + r.stderr}"
+    # 二进制文件进暂存区不得让闸门崩成堆栈：给文档加截图是现实场景，实测 UnicodeDecodeError
+    (work / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\xff\xfe")
+    git("add", "shot.png")
+    r = git("commit", "-m", "probe: binary asset")
+    assert r.returncode == 0, f"[65] staged 二进制文件让提交闸崩了: {r.stdout + r.stderr}"
+PY
+ok "repo-owned git hook enforces the gate regardless of commit command spelling"
+
 echo "E2E PASS: ${CHECKS} checks"

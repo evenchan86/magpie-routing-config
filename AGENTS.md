@@ -91,7 +91,8 @@
 - `scripts/apply.py`：草案按 id upsert 合并进本机配置（dry-run 默认；校验合并结果 + 展示组内字段级变化，`--write` 备份+写后读回校验+失败自动恢复，只动 groups）。
 - `scripts/doctor.py`：只读诊断现有配置（组结构 + 校验 + 手动冒烟步骤，输出脱敏）。
 - `scripts/docgate.py`：文档同步守卫的共享判定（公开面提取、豁免解析、从脚本 usage 解析 CLI 契约），被 e2e 与提交闸共用。
-- `scripts/commit-gate.py`：提交闸——公开面变更必须同批同步公开文档，且当日 review 档案必须含「文档对照」小节。
+- `scripts/commit-gate.py`：提交闸——公开面变更必须同批同步公开文档；默认模式还要求当日 review 档案含「文档对照」小节，`--docs-only` 只查前者。
+- `.githooks/pre-commit`：仓库自带的 git 原生提交闸（`git config core.hooksPath .githooks` 启用），不依赖任何外部工具。
 - `examples/demo/`：虚构供应商的两层完整走通示例（含多模型子组）。
 
 ## 本仓库自身的开发命令
@@ -108,7 +109,18 @@ bash scripts/e2e.sh    # 隔离验收（假 HOME，不碰真实配置）
 |---|---|---|
 | 机器闸 | 公开面变了但文档没跟；公开文档里的命令签名与脚本 `usage` 不一致 | `scripts/e2e.sh` 第 63/64 条（提交前必跑） |
 | 流程闸 | 语义类失真（过度承诺、散文与实现分叉、来源标注错） | review 任务书 + 档案「文档对照」小节 |
-| 提交闸 | 上面两项的产物不全 | `scripts/commit-gate.py`，由全局 hook 在 `git commit` 时调用 |
+| 提交闸 | 上面两项的产物不全 | 仓库自带 `.githooks/pre-commit`（git 原生）→ `scripts/commit-gate.py` |
+
+**强制点必须在 git 层，不能靠解析命令字符串。** 外部工具 hook 靠 `git\s+commit` 之类的正则认命令，实测 `git -C <path> commit`、`git -c k=v commit`、`git --no-pager commit`、提交消息里含 `--amend` 四种形态全部绕过，`echo 'git commit'` 反而被误拦。git 原生 hook 由 git 自己触发，**与命令怎么拼写无关**，`--amend` 也照样跑。e2e 第 65 条用**真提交**验证这五种形态（字符串匹配探针证明不了）。
+
+启用一次（本机局部配置，可 `git config --unset core.hooksPath` 撤销）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+- **别的项目要复用**：把 `.githooks/pre-commit` + `scripts/commit-gate.py` + `scripts/docgate.py` 拷过去（**两个脚本必须放在 `<仓库根>/scripts/`**，hook 里的路径与此对应），同样设 `core.hooksPath`，需要 `python3` 在 PATH。**不放这些文件的项目完全不受影响**——没有全局 hook，没有跨仓库依赖。
+- **退出通道**：`git commit --no-verify` 是 git 既定语义，拦不住也不假装拦得住。同类还有 plumbing（`git commit-tree` 不跑 hook）、合并冲突解决不触发 pre-commit、删除 hook 或 unset `core.hooksPath`。这些都是**显式动作**，与「命令换个写法就静默绕过」性质不同；内容正确性最终由 e2e 兜底。
 
 **公开面**只有三类，纯内部实现改动不触发：任意 `scripts/*.py` 的 `usage` 行、`scripts/validate.py` 的模块级大写常量、`templates/*.json` 的顶层键。
 
@@ -123,4 +135,11 @@ bash scripts/e2e.sh    # 隔离验收（假 HOME，不碰真实配置）
 - **review 任务书必须包含文档对照**：明确「不要只审 diff，也翻没碰过的公开文件」，并要求产出逐文件结论。
 - **review 档案必须有「文档对照」小节**：逐个公开文件写「相关/无关 + 依据」，至少提到 3 个公开文件。没有这一节，`commit-gate.py` 直接拦下。
 - 公开文档清单 = 仓库里的 `.md`（含本批新增、尚未 git 跟踪的），排除 `docs/superpowers/`、`tasks/` 内部过程目录。
-- 提交闸是**通用钩子 + 仓库自带规则**：全局 hook 只在当前仓库存在 `scripts/commit-gate.py` 时才调用它，别的项目不受影响。闸门拦下时保留 review marker，修完可直接重试。
+- **闸门分两层，对应两种使用者**：
+
+  | 模式 | 查什么 | 给谁用 |
+  |---|---|---|
+  | `--docs-only` | 公开面 ↔ 公开文档 | 所有人。仓库自带 git hook 用这个：档案目录不随仓库分发，外部贡献者没有它 |
+  | 默认（无旗标） | 上面那条 + 当日 review 档案「文档对照」小节 | 个人 review 工作流 |
+
+  手动跑：`python3 -I scripts/commit-gate.py`（默认）或加 `--docs-only`。用法 `usage: commit-gate.py [--docs-only]`，未知旗标退出码 2。

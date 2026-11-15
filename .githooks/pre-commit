@@ -1,0 +1,8 @@
+#!/bin/sh
+# 仓库自带的提交闸（git 原生 hook，不依赖任何外部工具或别的项目）。
+# 启用一次：git config core.hooksPath .githooks
+#
+# 只强制「公开面变更必须同批同步公开文档」——这条对任何贡献者都成立。
+# 个人 review 档案那层（「文档对照」逐文件结论）不随仓库分发，故这里用 --docs-only 跳过；
+# 需要它的人直接跑 `python3 -I scripts/commit-gate.py`（默认模式两条都查）。
+exec python3 -I scripts/commit-gate.py --docs-only
