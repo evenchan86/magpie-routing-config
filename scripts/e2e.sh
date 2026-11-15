@@ -919,4 +919,243 @@ for label, g, needle in bad:
 PY
 ok "group real key names: weights/unlists/match accepted, CLI weight/listed rejected"
 
+# 60. 角色启发式结构化：signals 可机械执行，且与 demo 映射自洽
+python3 -I - <<'PY'
+import json
+from pathlib import Path
+roles_doc = json.loads(Path("templates/roles.json").read_text())
+roles, mapping = roles_doc["roles"], roles_doc["mapping"]
+assert set(roles) == set(mapping), "mapping keys must match roles"
+for key in ("how_to_use_signals", "capability_is_not_in_config", "order", "element",
+            "classifier_separation", "user_confirms"):
+    assert isinstance(roles_doc["mapping_rules"].get(key), str) and roles_doc["mapping_rules"][key], key
+for name, role in roles.items():
+    s = role["signals"]
+    for field in ("name_contains", "name_avoid", "needs"):
+        assert isinstance(s[field], list), f"{name}.{field} must be a list"
+        assert all(isinstance(x, str) and x and x == x.lower() for x in s[field]), \
+            f"{name}.{field} tokens must be non-empty lowercase (matching is on the lowercased model name)"
+    assert isinstance(s["prefer"], str) and s["prefer"], name
+assert roles["intent/judge"]["signals"].get("exclusive") is True, "classifier role must be exclusive"
+assert not any(r["signals"].get("exclusive") for n, r in roles.items() if n != "intent/judge")
+
+# 行为断言：按 roles.json 描述的【整段匹配 + 负信号否决】机械执行，结果必须站得住。
+# @effort 的剥离复用 render.py 的同一套判定（支持 + 多级；模型 id 本身含 @ 不误伤）。
+import importlib.util, re
+spec = importlib.util.spec_from_file_location("render", "scripts/render.py")
+render = importlib.util.module_from_spec(spec); spec.loader.exec_module(render)
+
+def base_of(ref):
+    return render.split_override(ref)[0].split("#")[0]
+
+def signals(role, ref):
+    """返回 (正信号命中?, 负信号命中?)；整段相等，不是子串。"""
+    segs = [s for s in re.split(r"[^a-z0-9]+", base_of(ref).split("/")[-1].lower()) if s]
+    s = roles[role]["signals"]
+    return (any(t in segs for t in s["name_contains"]), any(t in segs for t in s["name_avoid"]))
+
+def check_mapping(mapping):
+    for name, refs in mapping.items():
+        for ref in refs:
+            pos, neg = signals(name, ref)
+            assert pos, f"{name}: {ref} not a signal candidate"
+            assert not neg, f"{name}: {ref} hits a negative signal"
+    judge = {base_of(r) for r in mapping["intent/judge"]}
+    for name, refs in mapping.items():
+        if name != "intent/judge":
+            assert not judge & {base_of(r) for r in refs}, "classifier model reused"
+
+demo = json.loads(Path("examples/demo/roles.mapped.json").read_text())
+check_mapping(demo)
+# 合法写法不得误判：多级强度 @low+minimal（minimal 含 mini）、模型 id 自带 @ 日期
+check_mapping({**demo,
+               "reasoning/strong": ["acme/strong-reasoner@low+minimal"],
+               "intent/judge": ["acme/lite-judge@2024-08-06"],
+               "fast/cheap": ["acme/lite-judge@2025-01-01"]})
+# 供应商名自带 token 的碰撞：整段匹配下不得把旗舰当快模型、把快模型当强模型
+for ref, role in (("acme/promini-2.5-pro", "fast/cheap"), ("acme/promini-2.5-pro", "intent/judge"),
+                  ("acme/maximini-m3.1-flash", "reasoning/strong")):
+    pos, neg = signals(role, ref)
+    assert not pos or neg, f"{ref} wrongly ranked as {role} candidate"
+assert signals("reasoning/strong", "acme/promini-2.5-pro") == (True, False)
+assert signals("fast/cheap", "acme/maximini-m3.1-flash") == (True, False)
+assert signals("reasoning/strong", "acme/mini-chat") == (False, True)
+assert signals("intent/judge", "acme/pro-chat") == (False, True)
+# 子串误伤：codec 不是编码模型、devops 不是开发模型
+assert signals("code/general", "acme/turbo-codec") == (False, False)
+assert signals("code/general", "acme/devops-agent") == (False, False)
+# 真复用仍要被抓：classifier 与路由角色指向同一模型（且该模型确实命中两个角色的正信号）
+try:
+    check_mapping({**demo, "intent/judge": ["acme/lite-judge"], "fast/cheap": ["acme/lite-judge"]})
+except AssertionError as exc:
+    assert "classifier model reused" in str(exc), exc
+else:
+    raise AssertionError("classifier reuse was not caught")
+PY
+ok "role signals are machine-applicable and consistent with the demo mapping"
+
+# 61. apply 合并计划显示【组内字段级变化】（含被删字段），且脱敏
+python3 -I - "$TMP" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+models = ["judge", "judge-b", "lite-chat", "code-standard", "code-pro", "long-chat"]
+target = {"providers": [{"id": "acme", "models": models, "key": "FAKE-acme-key-not-real"}],
+          "groups": [
+    {"id": "g-code", "members": ["acme/code-standard:high", "acme/lite-chat:low"],
+     "routing": "order", "affinity": "session", "classifier": "acme/judge",
+     "weights": {"acme/code-standard:high": 5},
+     "rules": [{"use": "acme/code-standard:high", "intent": "impl"}]},
+    {"id": "g-light", "members": ["acme/lite-chat"], "routing": "usage"},
+    {"id": "g-order", "members": ["acme/lite-chat", "acme/long-chat"]},
+    {"id": "g-keep", "members": ["acme/long-chat"]}]}
+draft = {"groups": [
+    {"id": "g-code", "members": ["acme/lite-chat:low", "acme/code-pro:high"],
+     "routing": "usage", "classifier": "acme/judge-b",
+     "rules": [{"use": "acme/code-pro:high", "intent": "impl"},
+               {"use": "acme/code-pro:high", "intent": "refactor"}]},
+    {"id": "g-light", "members": ["acme/lite-chat"], "routing": "usage"},
+    {"id": "g-order", "members": ["acme/long-chat", "acme/lite-chat"]},
+    {"id": "g-new", "members": ["acme/long-chat"]}]}
+tp, dp = tmp/"t61.json", tmp/"d61.json"
+tp.write_text(json.dumps(target)); dp.write_text(json.dumps(draft))
+def run(path):
+    p = subprocess.run([sys.executable, "-I", "scripts/apply.py", str(dp), str(path)],
+                       capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr
+rc, out = run(tp)
+assert rc == 0, out
+for needle in ("members: -acme/code-standard:high +acme/code-pro:high",
+               "routing: order → usage", "classifier: acme/judge → acme/judge-b",
+               "rules: 1 → 2", "rules[0].use: acme/code-standard:high → acme/code-pro:high",
+               "rules[1]: added (use acme/code-pro:high)",
+               "affinity: session → (unset)", "weights: {1 keys} → (unset)",
+               "members: order changed", "g-light: identical"):
+    assert needle in out, f"merge plan missing {needle!r}:\n{out}"
+assert "FAKE-acme-key-not-real" not in out, "merge plan leaked a provider key"
+assert "nothing written" in out
+
+# 畸形存量组（members 非列表 / 元素非字符串）不得崩溃，也不得把对象内容打印出来
+bad = json.loads(json.dumps(target))
+bad["groups"][0]["members"] = {"opaque": "opaque-member-object"}
+bad["groups"][1]["members"] = [{"k": "opaque-member-object"}]
+bp = tmp/"t61bad.json"; bp.write_text(json.dumps(bad))
+rc, out = run(bp)
+assert rc == 0, out
+assert "opaque-member-object" not in out, "diff dumped a malformed member object"
+assert "members: {1 keys} → [2 items]" in out and "members: -{1 keys} +acme/lite-chat" in out, out
+
+# --write 路径同样先展示组内变化
+wp = tmp/"t61write.json"; wp.write_text(json.dumps(target))
+p = subprocess.run([sys.executable, "-I", "scripts/apply.py", str(dp), str(wp), "--write"],
+                   capture_output=True, text=True)
+assert p.returncode == 0, p.stdout + p.stderr
+assert "routing: order → usage" in p.stdout and "post-write validation PASS" in p.stdout
+PY
+ok "apply merge plan shows intra-group field changes (desensitized, both paths)"
+
+# 62. 合并计划的脱敏与输入闸门：存量自由文本不回显、重复 id 拒绝、畸形输入不 traceback
+python3 -I - "$TMP" <<'PY'
+import importlib.util, json, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("ap", "scripts/apply.py")
+ap = importlib.util.module_from_spec(spec); spec.loader.exec_module(ap)
+FAKE = "-".join(["FAKE", "acme", "key", "not", "real", "0123456789"])
+URL = "https://FAKE-endpoint.invalid/v1"
+EP = "https://gw.example.invalid/v1"  # 不含 FAKE- 前缀，才能单独验 endpoint 闸门
+models = ["judge", "code-standard", "code-pro", "lite-chat"]
+prov = {"providers": [{"id": "acme", "models": models, "key": FAKE}]}
+
+def run(target, draft, write=False):
+    t, d = tmp/"t62.json", tmp/"d62.json"
+    t.write_text(json.dumps(target)); d.write_text(json.dumps(draft))
+    cmd = [sys.executable, "-I", "scripts/apply.py", str(d), str(t)] + (["--write"] if write else [])
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr, json.loads(t.read_text())
+
+# a) 存量组的自由文本（note/name/未知键/rule intent）可能夹带密钥或 endpoint：
+#    校验的是合并结果，存量侧不过校验，故一律只给形态
+old = {"id": "g-code", "members": ["acme/code-standard"], "classifier": "acme/judge",
+       "note": f"rotate: {FAKE} / {URL}", "name": FAKE, "whatever": FAKE,
+       "rules": [{"use": "acme/code-standard", "intent": f"impl {FAKE}"}]}
+new = {"id": "g-code", "members": ["acme/code-standard"], "classifier": "acme/judge",
+       "rules": [{"use": "acme/code-standard", "intent": "impl"}]}
+for write in (False, True):
+    rc, out, _ = run({**prov, "groups": [old]}, {"groups": [new]}, write=write)
+    assert rc == 0, out
+    assert FAKE not in out and URL not in out, f"free text echoed (write={write}):\n{out}"
+    assert "note: <text" in out and "name: <text" in out and "whatever: <text" in out, out
+    assert "rules[0].intent: <text" in out, out
+
+# a2) 引用类字段的【存量侧】同样不过校验：members/use/where.field/classifier/组 id
+#     若被塞进凭据或 endpoint，一律不得原样回显（白名单字段也要过 secretish 闸门）
+SEC = "sk-" + "a" * 26
+for label, old_g, new_g in (
+    ("members", {"members": [f"legacy {SEC}"]}, {"members": ["acme/code-standard"]}),
+    ("classifier", {"members": ["acme/code-standard"], "classifier": SEC},
+     {"members": ["acme/code-standard"], "classifier": "acme/judge"}),
+    ("rule use", {"members": ["acme/code-standard"], "classifier": "acme/judge",
+                  "rules": [{"use": SEC, "intent": "i"}]},
+     {"members": ["acme/code-standard"], "classifier": "acme/judge",
+      "rules": [{"use": "acme/code-standard", "intent": "i"}]}),
+    ("where field", {"members": ["acme/code-standard"], "classifier": "acme/judge",
+                     "rules": [{"use": "acme/code-standard", "intent": "i",
+                                "where": [{"field": SEC, "op": "is"}]}]},
+     {"members": ["acme/code-standard"], "classifier": "acme/judge",
+      "rules": [{"use": "acme/code-standard", "intent": "i",
+                 "where": [{"field": "subagent", "op": "is"}]}]}),
+    ("endpoint", {"members": [EP]}, {"members": ["acme/code-standard"]}),
+):
+    for write in (False, True):
+        rc, out, _ = run({**prov, "groups": [{"id": "g-code", **old_g}]},
+                         {"groups": [{"id": "g-code", **new_g}]}, write=write)
+        assert rc == 0, out
+        assert SEC not in out and URL not in out and EP not in out, f"{label} leaked (write={write}):\n{out}"
+# 组 id 是凭据形态时走不到 diff：validate 先拒（两侧 id 都会进合并结果）
+rc, out, _ = run({**prov, "groups": [{"id": SEC, "members": ["acme/code-standard"]}]},
+                 {"groups": [{"id": SEC, "members": ["acme/code-pro"]}]})
+assert rc != 0 and "secret-like value" in out and SEC not in out, out
+
+# b) 存量重复 id：upsert 会静默丢组，必须拒绝且不写盘
+dup = {**prov, "groups": [{"id": "g-code", "members": ["acme/code-standard"], "note": "FIRST"},
+                          {"id": "g-code", "members": ["acme/code-pro"], "note": "SECOND"},
+                          {"id": "g-light", "members": ["acme/lite-chat"]}]}
+rc, out, after = run(dup, {"groups": [{"id": "g-light", "members": ["acme/lite-chat"]}]}, write=True)
+assert rc != 0 and "duplicates group id" in out, out
+assert len(after["groups"]) == 3 and any(g.get("note") == "FIRST" for g in after["groups"]), after
+# 草案侧重复 id 同样拒绝
+rc, out, _ = run({**prov, "groups": []},
+                 {"groups": [{"id": "g", "members": ["acme/lite-chat"]}] * 2})
+assert rc != 0 and "draft groups[1] duplicates group id" in out, out
+
+# c) 畸形 id / 非对象元素：干净 FAIL，不 traceback
+for target, draft, needle in (
+    ({**prov, "groups": [{"id": ["g-code"], "members": ["acme/code-standard"]}]},
+     {"groups": [{"id": "g-light", "members": ["acme/lite-chat"]}]}, "non-empty string id"),
+    ({**prov, "groups": []}, {"groups": ["g-code"]}, "must be an object"),
+):
+    rc, out, _ = run(target, draft)
+    assert rc != 0 and needle in out and "Traceback" not in out, out
+
+# d) 真实 magpie 形态不得产生假变化；真实改动不得被相等性吞掉
+assert ap.group_diff({"members": None, "match": ["acme/*"]}, {"members": [], "match": ["acme/*"]}) == []
+assert ap.group_diff({"rules": None}, {"rules": []}) == []
+assert ap.group_diff({"weights": {"acme/a": 1}}, {"weights": {"acme/a": 1000}}) == ["weights: acme/a 1 → 1000"]
+assert ap.group_diff({"levels": ["low", "high"]}, {"levels": ["low", "max"]}) == ["levels: -high +max"]
+assert ap.group_diff({"disabled": 1}, {"disabled": True}) == ["disabled: 1 → True"]
+assert ap.group_diff({"members": ["acme/a", "acme/a"]}, {"members": ["acme/a"]}) == [
+    "members: duplicate count changed (2 → 1 entries)"]
+assert ap.group_diff({"name": ""}, {}) == ["name: (empty) → (unset)"]
+r1 = [{"use": "acme/code-standard", "intent": "a"}, {"use": "acme/code-pro", "intent": "b"}]
+assert ap.group_diff({"rules": r1}, {"rules": list(reversed(r1))}) == ["rules: reordered"]
+assert ap.group_diff({"rules": [{"use": "acme/code-standard", "intent": "i",
+                                 "where": [{"field": "subagent", "op": "is"}]}]},
+                     {"rules": [{"use": "acme/code-pro", "intent": "i",
+                                 "where": [{"field": "tokens", "op": "gt", "value": 900000}]}]}) == [
+    "rules: 1 → 1", "rules[0].use: acme/code-standard → acme/code-pro",
+    "rules[0].where: [subagent is] → [tokens gt 900000]"]
+PY
+ok "merge plan never echoes unvalidated free text; duplicate ids and malformed input refused cleanly"
+
 echo "E2E PASS: ${CHECKS} checks"

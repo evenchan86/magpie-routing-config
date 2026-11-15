@@ -57,13 +57,13 @@ docs/
   schema.md                # 配置字段参考（含来源与存疑标注）
   patterns.md              # 路由模式库
 templates/
-  roles.json               # 角色定义与映射
+  roles.json               # 角色定义、匹配信号与映射
   groups.template.json     # 两层路由模板（角色占位）
 examples/demo/             # 虚构供应商的完整走通示例
 scripts/
   render.py                # 把角色→模型列表映射展开进模板（多模型子组）
   validate.py              # 路由层草案校验器（组引用、classifier 分离）
-  apply.py                 # 草案按 id upsert 合并进本机配置（默认 dry-run；--write 先备份、写后读回校验、失败自动恢复）
+  apply.py                 # 草案按 id upsert 合并进本机配置（默认 dry-run，展示被替换组的组内字段级变化；--write 先备份、写后读回校验、失败自动恢复）
   doctor.py                # 只读诊断现有配置（+ 手动冒烟步骤）
   e2e.sh                   # 隔离验收
 ```

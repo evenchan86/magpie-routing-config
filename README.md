@@ -57,13 +57,13 @@ docs/
   schema.md                # config field reference (with source & confidence notes)
   patterns.md              # routing pattern library
 templates/
-  roles.json               # role definitions & mapping
+  roles.json               # role definitions, matching signals & mapping
   groups.template.json     # two-layer routing template (role placeholders)
 examples/demo/             # end-to-end example with a fictional provider
 scripts/
   render.py                # expand role->model-list mapping into the template (multi-model subgroups)
   validate.py              # routing-layer draft validator (group refs, classifier separation)
-  apply.py                 # upsert-merge a draft into local config (dry-run by default; --write backs up, verifies on disk, auto-restores on failure)
+  apply.py                 # upsert-merge a draft into local config (dry-run by default, shows field changes for replaced groups; --write backs up, verifies on disk, auto-restores on failure)
   doctor.py                # read-only diagnosis of existing config (+ manual smoke-test steps)
   e2e.sh                   # isolated acceptance test
 ```
