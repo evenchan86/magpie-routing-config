@@ -1166,4 +1166,308 @@ assert ap.group_diff({"rules": [{"use": "acme/code-standard", "intent": "i",
 PY
 ok "merge plan never echoes unvalidated free text; duplicate ids and malformed input refused cleanly"
 
+# 63. 文档 ↔ 代码 机检守卫：枚举/字段集合相等、历史错误写法、中英平行、demo 命令可跑
+python3 -I - "$TMP" "$ROOT" <<'PY'
+import importlib.util, os, re, shutil, subprocess, sys, time
+from pathlib import Path
+tmp, root = Path(sys.argv[1]), Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("v", "scripts/validate.py")
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+dgspec = importlib.util.spec_from_file_location("dg", root / "scripts/docgate.py")
+dg = importlib.util.module_from_spec(dgspec); dgspec.loader.exec_module(dg)
+DOCS = dg.public_docs(root)          # 不写死清单：新增公开文档自动纳入（与第 64 条同口径）
+schema = Path("docs/schema.md").read_text()
+
+def section(pat):
+    """按【行首整行】定位章节，返回 (文档里的实际标题, 正文)。用 str.index 会命中正文里
+    更早出现的同名片段，标题被改名时抛裸 ValueError，看不出是哪一节丢了（实测）。
+    数量词必须由调用方写成 \\d+：枚举扩容时标题里的数字本来就该跟着变，写死「12 种」
+    会把「代码+文档同步加值」这种合法演进判成章节被改名（实测误拦正例）。"""
+    m = re.search(rf"^({pat})\s*$", schema, re.M)
+    assert m, f"[63a] 章节缺失或标题被改名: {pat}"
+    return m.group(1), schema[m.end():]
+
+def first_col(pat):
+    """取某章节【第一张表】首列的标识符——那张才是本节的字段/枚举表。
+    只取第一张表：节内后面可能有合法子表（某字段的取值表）或 CLI 旗标表，并入集合会
+    误拦合法演进；靠「CLI 旗标」表头字面做分界，表头一改名就失效且报错误导（均实测）。
+    数据行首列取不到标识符【直接 FAIL】：静默跳过会让这里漏计一个值、别处多计一个值
+    互相抵消，集合相等就假绿（实测可复现）。
+    射程边界：本节第二张及以后的表不参与集合校验——它们声明的是别的东西（如 CLI 旗标），
+    那类失真由 63b 的「旗标不得当 JSON 键名」与 64a 的命令契约负责。"""
+    title, body = section(pat)
+    table = []
+    for line in body.splitlines()[1:]:
+        if line.startswith("|"):
+            table.append(line)
+        elif table:
+            break                                 # 第一张表结束即止
+    rows = [l for l in table if not re.fullmatch(r"[\s|:\-]+", l)]
+    out = []
+    for row in rows[1:]:                          # rows[0] 是表头
+        cell = row.split("|")[1].strip()
+        toks = re.findall(r"`([A-Za-z][A-Za-z0-9_-]*)`", cell)
+        assert toks, f"[63a] {title}: 表格首列没有裸标识符（期望 `字段名`）: {row[:70]}"
+        out.extend(toks)
+    return title, set(out)
+
+# a) 文档枚举/字段表必须与校验器常量【集合相等】：漏写新值、写了不存在的值都抓。
+# 标题里的数量词也纳入校验——集合扩到 13 个而标题仍写「12 种」同样是漂移（实测漏过）。
+# 数量词取自【文档实际标题】而不是这里写死的字符串，否则那条断言校的是 e2e 自己。
+for pat, const, name in (("## group 字段", v.GROUP_FIELDS, "group fields"),
+                         ("## rule 字段", v.RULE_FIELDS, "rule fields"),
+                         (r"## routing：\d+ 种池路由模式", v.ROUTING_MODES, "routing modes"),
+                         (r"## affinity：\d+ 种会话粘性", v.AFFINITY, "affinity values")):
+    title, doc = first_col(pat)
+    assert doc == const, f"[63a] {name} drift: doc-only={sorted(doc - const)} code-only={sorted(const - doc)}"
+    num = re.search(r"(\d+)\s*种", title)
+    if num:
+        assert int(num.group(1)) == len(const), \
+            f"[63a] {title} 标题写 {num.group(1)} 种，实际常量 {len(const)} 个"
+# effort 档位：两条独立断言。「凡 run 必须等于某集合」会误伤合法的子集表述（实测误拦），
+# 只在含 minimal 时才判又会漏掉丢 minimal 的写法（实测漏过）。改为：
+#  a) 任何含 ≥2 个档位词的 run 都不得含集合外的词（ultra 这类编造档位），逐项反引号写法也算
+#  b) 承诺给出【完整枚举】的文件必须有一处把该集合列齐，防止被悄悄缩减或换成另一个集合
+EFFORT_SETS = [v.MEMBER_EFFORT, v.USE_EFFORT, v.RULE_EFFORT]
+UNION = set().union(*EFFORT_SETS)
+FULL_RUN = {"docs/schema.md": [v.MEMBER_EFFORT, v.USE_EFFORT],
+            "docs/patterns.md": [v.MEMBER_EFFORT, v.USE_EFFORT]}
+# 断词只按 ASCII 字母数字：Python re 里汉字算 \w，`\b` 在「档位ultra/low/high」这种
+# 紧贴汉字的写法上不成立——既漏判编造档位，又误拦紧贴汉字的完整枚举（实测两个方向）。
+for rel in DOCS:
+    text = Path(rel).read_text().replace("`", "")
+    for run in re.findall(rf"(?<![A-Za-z0-9])(?:[a-z]+/){{2,}}[a-z]+(?![A-Za-z0-9])", text):
+        parts = set(run.split("/"))
+        if len(parts & UNION) >= 2:
+            assert parts <= UNION, f"[63a] {rel}: 未知 effort 档位: {run}"
+    # 完整枚举必须是【连续列举】：只按「某行含齐这些词」判，会被同句纠正语里的词凑齐
+    #（「集合 none/low/…（…且缺 minimal，已修正）」实测假绿）。分隔符不限 / 、 , 空格，
+    # 但整段必须全是档位词，中间混进别的词就不算枚举。
+    for want in FULL_RUN.get(rel, []):
+        assert any(set(re.split(r"[ \t/、,，]+", run)) == set(want)
+                   for run in re.findall(r"(?<![A-Za-z0-9])[a-z]+(?:[ \t/、,，]+[a-z]+)*(?![A-Za-z0-9])", text)), \
+            f"[63a] {rel}: 没有任何一处完整列出档位枚举，应含 {sorted(want)}"
+
+# b) 历史错误写法黑名单：已被实测推翻的表述不得复活。
+# 射程说明：这是【枚举式防复发】，只认下列精确形态；中文数字、换句同义改写不在射程内，
+# 那类语义失真仍靠收尾的全量文档对照 review。
+def prose_lines(text):
+    """产出 (行, 最近的 ## 级标题)，跳过 ``` 围栏内的行。
+    围栏里的 `#!/bin/sh`、`# 待验证` 不是标题，`###` 子标题也不改变所属小节——
+    三者都会污染 heading 判定，造成「清单内误拦 / 清单外假豁免」双向失真（实测）。"""
+    heading, fence = "", False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        if line.startswith("## "):
+            heading = line
+        yield line, heading
+
+# 豁免只认【明确宣告该说法作废】的判词，且判词必须与错写【在同一句】。
+# 泛词（会报/不是/曾/旧版）不能单独构成豁免：「所有组的 members 必须非空，否则会报错」
+# 是错写最自然的行文（实测放行）。只换词表也不够——同一长行别处的「…不成立」
+# 仍会豁免行首的错写（实测回归），故按句判，不按整行判。
+EXEMPT = ("是错的", "已作废", "已纠正", "已推翻", "已废弃", "不成立")
+SENT = "。；;！!？?"
+
+def clause_at(line, pos):
+    """取 pos 所在的句子（按句末标点切）。逗号不算句界——纠正判词常在括号内的同一句里。"""
+    left = max([line.rfind(c, 0, pos) for c in SENT])
+    rights = [i for i in (line.find(c, pos) for c in SENT) if i != -1]
+    return line[left + 1: min(rights) if rights else len(line)]
+
+# (模式, 说明, 是否需要纠正语境豁免, 附加条件)
+#  附加条件 "PENDING" = 待验证清单小节内不算（那里写「待核」是合法的，字段表里才是失真）；
+#  附加条件为正则 = 该行还须命中它才判（与 routing 无关的「11 种意图分类」不误拦）
+NONEMPTY = r"(?:非空|不能为空|不得为空)"      # 同义近变体与词序颠倒都算（实测漏过）
+BANNED = [(rf"(?:所有|每个|各)组[^。\n]*(?:members[^。\n]*{NONEMPTY}|{NONEMPTY}[^。\n]*members)",
+           "members-or-match rule", True, None),
+          (r"11 (?:模式|种)", "routing has 12 modes", True, r"routing|池路由"),
+          (r"\b11 modes\b", "routing has 12 modes", True, r"routing"),
+          (r"必须[^。\n]*compact:\s*true", "compact 是压缩触发条件不是兜底", True, None),
+          (r"值形态待核", "value shapes already probed", False, "PENDING"),
+          (r"语义仍待核", "semantics already settled", False, "PENDING")]
+for rel in DOCS:
+    for line, heading in prose_lines(Path(rel).read_text()):
+        live = re.sub(r"~~.*?~~", "", line)     # 划掉的历史条目是明示已作废的原文
+        for pat, why, contextual, needs in BANNED:
+            if needs == "PENDING" and "待验证" in heading:
+                continue
+            if needs and needs != "PENDING" and not re.search(needs, live):
+                continue
+            hit = re.search(pat, live)
+            if hit and contextual and any(w in clause_at(live, hit.start()) for w in EXEMPT):
+                continue
+            assert not hit, f"[63b] {rel}: stale claim ({why}): {line[:90]}"
+# 精确命令形态不接受「纠正词豁免」：schema.md 那行【同时】含错误命令与「会报」，
+# 只凭纠正词放行就会把真错误用法也放过去（实测回归）。规则：引用错误命令的【同一段】
+# 必须给出正确写法。段 = 空行分隔的块——「示错围栏 + 紧随的纠正句」是正当排版，
+# 按物理行判会误拦它（实测）。裸 `restore auto`（无 magpie group 前缀）同样误导，一并认。
+for rel in DOCS:
+    for block in re.split(r"\n\s*\n", Path(rel).read_text()):
+        live = re.sub(r"~~.*?~~", "", block)
+        if re.search(r"restore\s+auto\b(?!-)", live):
+            assert "restore <" in live, \
+                f"[63b] {rel}: `restore auto` 不是合法用法且同段未给出正确写法: {live.strip()[:90]}"
+
+# CLI 旗标不得被当 JSON 键名陈述。`weight`/`listed` 也是 routing 模式值，`when` 也可能是英文单词，
+# 故只在【JSON 键语境】里判：「组级/字段/真键名是 … `X`」这类写法必须写真键名。
+# 不做整行豁免——同一行别处提到 CLI 不代表这处声明就是对的。
+CLI_FLAGS = {**v.GROUP_CLI_ONLY, "when": "where", "except-folders": "exceptFolders"}
+for rel in DOCS:
+    for line, _ in prose_lines(Path(rel).read_text()):
+        live = re.sub(r"~~.*?~~", "", line)
+        for flag, real in CLI_FLAGS.items():
+            # 正序「真键名是 `X`」与倒序「`X` 是 JSON 字段」两种句式都要认（实测倒序漏过）
+            assert not re.search(rf"(?:组级|字段|真键名|键名|JSON 名)\s*(?:是|为|叫)?\s*(?:\*\*)?\s*`{flag}`", live), \
+                f"[63b] {rel}: `{flag}` stated as a JSON key (use `{real}`): {line[:90]}"
+            assert not re.search(rf"`{flag}`\s*(?:是|为|叫)\s*(?:\*\*)?\s*(?:JSON|组级|字段)", live), \
+                f"[63b] {rel}: `{flag}` stated as a JSON key (use `{real}`): {line[:90]}"
+
+# c) 中英 README 结构平行：只改一版会被抓
+en, zh = Path("README.md").read_text(), Path("README.zh.md").read_text()
+def shape(t):
+    return (len(t.splitlines()), len(re.findall(r"^## ", t, re.M)),
+            len([l for l in t.splitlines() if l.startswith("|")]),
+            t.count("```"), tuple("<lang>" if l in ("README.md", "README.zh.md") else l
+                                  for l in re.findall(r"\]\(([^)]+)\)", t)))
+assert shape(en) == shape(zh), (f"[63c] README EN/ZH out of sync: {shape(en)} vs {shape(zh)}"
+                                " — 单侧改动请同步另一版；计数相同也可能内容不平行，仍需人工对照")
+
+# d) demo 文档里的 bash 块：可执行的整块在【TMP 内的仓库副本】里真跑，其余只做静态校验。
+# 这一段的每一条限制都对应一次实测逃逸，别当多余防御删掉：
+#  - 不在真仓库里跑：fence 写相对路径会污染工作区，而 64b 读 git diff 会吃到这些改动（实测）
+#  - 只跑白名单命令：`cd scripts && bash e2e.sh` 会无限递归；`magpie …` 会按端口连活实例（实测）
+#  - 禁止 --write：本检查的职责是命令契约，不是写入配置。绝对路径 --write 实测改写穿过沙箱
+#  - HOME 指向 TMP + MAGPIE_ADDR 死端口：只设 HOME 不够，CLI 按端口连活实例
+SANDBOX = tmp / "repo"
+shutil.copytree(root, SANDBOX, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+REAL_CFG = str(Path.home() / ".config/magpie")
+fences = re.findall(r"```bash\n(.*?)```", Path("examples/demo/README.md").read_text(), re.S)
+assert fences, "[63d] demo README has no bash fence"
+ran = 0
+for idx, block in enumerate(fences):
+    # 任何拼法的自调用都剔除（不只 scripts/e2e.sh）：`cd scripts && bash e2e.sh` 会无限递归
+    lines = [l for l in block.splitlines() if "e2e.sh" not in l]
+    code = "\n".join(re.sub(r"#.*$", "", l) for l in lines)
+    # 指向真实配置的一律不执行：先归一 ${HOME}/$HOME/~ 再比对，只认字面 "~/.config" 会漏（实测）
+    # expanduser 只展开【字符串开头】的 ~，命令行中间的 ~/.config 展开不到（实测漏判）。
+    # 统一把 ${HOME}/$HOME/~/ 换成真实 home 再比对
+    home = str(Path.home())
+    norm = code.replace("${HOME}", home).replace("$HOME", home).replace("~/", home + "/")
+    if re.search(r"<[^>]+>", code) or REAL_CFG in norm:
+        continue
+    # 白名单：只接受 `python3 -I scripts/<脚本>.py …` 与 `python3 -I -c "…"`（含多行），
+    # 且不得带 --write、不得有 shell 元字符。其它命令（cd/magpie/rm/bash…）一律不执行。
+    runnable, why = True, ""
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        line = raw.strip()
+        i += 1
+        if not line or line.startswith("#"):
+            continue
+        if not line.startswith("python3 -I "):
+            runnable, why = False, f"命令不在白名单内: {line[:60]}"
+            break
+        if "--write" in line:
+            runnable, why = False, "带 --write 的命令不在验收里执行"
+            break
+        if re.search(r"&&|\||;|`|\$\(", line):
+            runnable, why = False, f"含 shell 元字符: {line[:60]}"
+            break
+        if line.startswith("python3 -I -c "):
+            # 内联脚本：吃掉到收尾引号为止的后续行；其中不得出现绝对路径字面量
+            while line.count('"') % 2 == 1 and i < len(lines):
+                line += "\n" + lines[i]
+                i += 1
+            if re.search(r"[\"']/(?:Users|home|etc|var|tmp)/", line):
+                runnable, why = False, "内联脚本里出现绝对路径字面量"
+                break
+    if not runnable:
+        # 复现块必须可执行，否则这条守卫会静默退化成只看签名
+        assert "scripts/render.py" not in code, f"[63d] fence {idx} 应可执行却被拒: {why}"
+        print(f"[63d] fence {idx} 跳过执行（{why}），仅做静态签名校验")
+        continue
+    cmds = "\n".join(lines)
+    # 产物一律改写进本 fence 专属目录（共用目录会让第二个 fence 被「陈旧产物」误伤）
+    work = tmp / f"fence{idx}"
+    work.mkdir()
+    paths = set(re.findall(r"/tmp/[\w.-]+", cmds))
+    arts = [work / Path(x).name for x in paths]
+    for x in paths:
+        cmds = cmds.replace(x, str(work / Path(x).name))
+    # 任何残留的沙箱外绝对路径都拒绝执行——「改写 /tmp 前缀」不等于「写入落在沙箱内」（实测）
+    check_text = cmds.replace("${HOME}", home).replace("$HOME", home).replace("~/", home + "/")
+    outside = [t for t in re.findall(r"(?<![\w.\"'])/[\w./-]+", check_text)
+               if not t.startswith(str(tmp))]
+    assert not outside, f"[63d] fence {idx}: 沙箱外绝对路径，拒绝执行: {outside[:3]}"
+    t0 = time.time()
+    p = subprocess.run(["bash", "-c", "set -euo pipefail\n" + cmds], cwd=SANDBOX,
+                       env={**os.environ, "HOME": str(tmp / "home"),
+                            "MAGPIE_ADDR": "127.0.0.1:1"},
+                       capture_output=True, text=True)
+    assert p.returncode == 0, f"[63d] demo fence {idx} failed: {p.stdout + p.stderr}"
+    if "scripts/validate.py" in code:   # 用剥注释后的 code：注释里提到不算
+        # 组数不写死：demo 扩组时这里不该成为绑定约束
+        assert re.search(r"PASS: \d+ group\(s\) valid", p.stdout), f"[63d] fence {idx}: {p.stdout}"
+    # 新鲜度：产物必须是本次真生成的。只防「命令失败被吞」不够——命令被整条删掉、
+    # 旧产物还在，校验照样绿（实测）
+    for a in arts:
+        assert a.exists() and a.stat().st_mtime >= t0 - 1, \
+            f"[63d] {a.name} not regenerated (stale artifact)"
+    ran += 1
+assert ran, "[63d] no demo fence was executed"
+PY
+ok "docs stay in sync with code (enums/fields, stale claims, EN-ZH parity, demo commands)"
+
+# 64. 文档同步闸：公开面变更必须同批同步公开文档；全部公开文档的命令签名与脚本 usage 一致
+python3 -I - "$ROOT" <<'PY'
+import importlib.util, subprocess, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("dg", root / "scripts/docgate.py")
+dg = importlib.util.module_from_spec(spec); spec.loader.exec_module(dg)
+docs = dg.public_docs(root)
+assert docs, "[64] no public docs found"
+
+# a) 全部公开文档的 bash 块：命令签名必须与脚本自己的 usage 契约一致（含用法占位符示例）
+probs = dg.check_doc_commands(root, docs)
+assert not probs, "[64a] doc command contract drift:\n  " + "\n  ".join(probs)
+
+# b) 本批（工作区相对 HEAD，含未跟踪文件）改了公开面 → 必须同批改了公开文档
+def git(*a):
+    p = subprocess.run(["git", *a], cwd=root, capture_output=True, text=True)
+    return p.returncode, p.stdout
+
+rc, out = git("diff", "HEAD", "--name-only")
+if rc == 0:                      # 干净克隆/无 git 时跳过：本条只约束「本批改动」
+    files = set(out.split())
+    rc2, untracked = git("ls-files", "--others", "--exclude-standard")
+    if rc2 == 0:
+        files |= set(untracked.split())
+    pairs = []
+    for f in sorted(files):
+        orc, old = git("show", f"HEAD:{f}")
+        p = root / f
+        pairs.append((f, old if orc == 0 else None,
+                      p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None))
+    changed = dg.surface_changes(pairs)
+    if changed:
+        _, diff = git("diff", "HEAD", "--", "scripts/", "templates/")
+        reasons = dg.exemptions(diff)                   # {文件: [理由]}
+        touched = [f for f in sorted(files) if f in docs]
+        # 无文档同步时，每个公开面文件都必须自带豁免（一条无关豁免不能掩护整批）
+        uncovered = [] if touched else [f for f in changed if f not in reasons]
+        assert not uncovered, (
+            "[64b] public surface changed without any public doc update:\n  "
+            + "\n  ".join(f"{f} → {', '.join(dg.docs_mentioning(root, f, docs)) or '(no doc mentions it)'}"
+                          for f in uncovered)
+            + "\n  同步公开文档后再提交；确属纯内部改动时在【该文件】写 `# doc-sync: <理由>`")
+PY
+ok "doc sync gate: public-surface changes need doc updates; all doc commands match script usage"
+
 echo "E2E PASS: ${CHECKS} checks"
