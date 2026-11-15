@@ -75,7 +75,7 @@
 | 能力相近（同档模型/同模型多通道） | `usage` | 按剩余额度分摊，防单通道耗尽 |
 | 有高低档（强模型 + 弱备用） | `order` | 强的先用，答不了再降级 |
 | 想用完一个再换 | `drain` | 额度耗尽才切，不切回 |
-| 同档按比例分配 | `weight` | 权重经组级 `weight` 设置（JSON 名已确证，值形态待核，见 schema.md） |
+| 同档按比例分配 | `weight` | 权重经组级 **`weights`** 设置（成员引用 → 1..1000 整数，键含 `:effort`）。**`weight=` 只是 CLI 旗标**，写进 JSON 会被静默忽略，见 schema.md |
 
 **强弱不同的成员勿放 `usage`/`rotate`**——弱模型会平摊/轮转到流量，质量不稳。另注意：`usage` 子组（如 g-test/g-light）兜底按剩余额度分摊，**没有「首成员 = 默认」**；首成员兜底只对 order 类模式成立。
 
@@ -92,7 +92,7 @@
 
 **意图**：同一模型在不同任务池用不同推理强度，按任务定强度而不是全局一刀切。
 
-**写法**：成员后缀 `:effort`，集合 `none/minimal/low/medium/high/xhigh/max`（旧文档的 `ultra` 是错的）。同模型两强度 = 两成员；`:low+high` 多级；`:fast` 厂商快速模式。
+**写法**：成员后缀 `:effort`，集合 `none/minimal/low/medium/high/xhigh/max`（旧文档的 `ultra` 是错的）。同模型两强度 = 两成员；`:low+high` 多级。**`:fast` 只是 CLI 输入糖**——手写进 JSON 的 members 会被当字面模型 id 跳过，JSON 里要用独立的 `fast` 数组（见 schema.md）。
 
 ```json
 {
@@ -205,7 +205,7 @@
 
 **校正**：旧版把 `compact:true` 当兜底规则——官方语义里它是**压缩触发条件**，不是兜底。默认兜底 = 未命中任何规则时按组的 **routing 模式**路由：`order` 首成员优先，`usage` 按剩余额度分摊，`weight` 按权重等；旧文档「普适成员顺序/首成员」的说法是失真，已纠正。
 **写法**：默认模型放 members 首位（**仅对 order 类模式成立**；usage/weight 子组按额度/权重分摊，没有首成员默认）；压缩流量用第 1 条 `{"use": "group/g-compact", "compact": true}` 分流（单层则 use 指向便宜/长上下文模型）。
-**取舍**：默认成员承接所有未分类流量，不宜太弱；**所有组** members 必须非空（工具校验），不强制 compact:true。
+**取舍**：默认成员承接所有未分类流量，不宜太弱；每组 **`members` 或 `match` 至少一个非空**（工具校验，`hidden:true` 墓碑豁免），不强制 compact:true。
 
 ### 9. 故障转移链
 

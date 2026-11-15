@@ -1,10 +1,10 @@
 {
   "description": "模型角色定义。角色与供应商解耦：agent 按 signals + hints 给出映射建议，使用者确认后把 mapping 填为本机模型引用。mapping 值是【有序模型列表】（主模型在前，可多个做故障转移/池）；元素为 base 引用 provider/model（可含 #account 通道，不含 :effort），可用 model@effort 覆写该模型强度（effort ∈ none/minimal/low/medium/high/xhigh/max，支持 + 多级如 @low+high），组合写法 provider/model#account@effort。仅当最后一个 @ 后恰为合法强度才算覆写，否则整串按 base 引用（模型 id/账号名本身可含 @，如 gpt-4o@2024-08-06、#user@example.com）。渲染时模板成员 <role:X>:effort 展开为该角色所有模型——带 @effort 的用覆写强度，其余用槽位 :effort（scripts/render.py，强度插在 #account 前，组内重叠模型精确去重保序）。intent/judge 是意图判断专用角色——只填 group.classifier（取列表首元素的裸引用，不带强度），绝不进路由成员/规则目标/兜底，与 fast/cheap 路由角色分离。",
   "mapping_rules": {
-    "how_to_use_signals": "对探测到的每个 provider/model，取【模型名小写】按非字母数字字符（- _ . / : 空格等）切段，token 与【整段相等】才算命中：命中 name_contains 记正信号、命中 name_avoid 记负信号。用整段而非子串，是为了避开供应商名自带的碰撞——子串匹配下 promini 含 mini、maximini 含 mini/max，会把旗舰模型误判成快模型、把快模型误判成强模型。整段匹配仍非万能（如 long 命中 a-long-name），命中只是【候选信号】不是结论。",
+    "how_to_use_signals": "对探测到的每个 provider/model，先只取【最后一个 / 之后的模型名段】（丢弃供应商前缀与中间路径段），转小写后按非字母数字字符（- _ . : 空格等）切段，token 与【整段相等】才算命中：命中 name_contains 记正信号、命中 name_avoid 记负信号。用整段而非子串，是为了避开模型名里的子串碰撞——子串匹配下 promini 含 mini、maximini 含 mini/max，会把旗舰模型误判成快模型、把快模型误判成强模型。整段匹配仍非万能（如 long 命中 a-long-name），命中只是【候选信号】不是结论。",
     "signal_conflicts": "同一角色内命中任一 name_avoid 即出局（负信号否决正信号）；同一模型命中多个角色属正常，交使用者裁决，不要自行分配。",
     "no_signal": "没有任何信号的模型【照常列给使用者确认】，不得因为没命中就排除——很多主流模型名不含这些 token。也不得为了凑满角色而硬套名字。",
-    "capability_is_not_in_config": "providers.json 的 models 数组只有裸名，没有多模态/推理档元数据；但 provider 级【可能】有 contexts 字段（模型名 → 上下文长度整数），探测时见到就直接参考，别再去问使用者。needs 里除上下文窗口外的能力仍必须问使用者或查供应商文档，禁止从名字臆断。",
+    "capability_is_not_in_config": "providers.json 的 models 数组只有裸名，没有多模态/推理档元数据；但 provider 级【可能】有 contexts 字段（模型名 → 上下文长度整数，可用 * 通配）：被它覆盖到的模型直接用、别再问；未列出的模型仍须确认——它可能只覆盖该供应商的一部分模型。needs 里除上下文窗口外的能力仍必须问使用者或查供应商文档，禁止从名字臆断。",
     "order": "列表顺序即优先级：主模型在前，其余做故障转移（routing=order）或池（routing=usage）。",
     "element": "provider/model[#account][@effort]；不含 :effort——强度由模板槽位决定，逐模型差异化才用 @effort。",
     "classifier_separation": "intent/judge 选定的模型必须从其他所有角色的候选中剔除，不得复用（硬约束；validate.py 的跨组守卫会在草案阶段拦下）。",
@@ -133,7 +133,7 @@
         ],
         "name_avoid": [],
         "needs": [
-          "上下文窗口大（先看 provider 的 contexts 字段；没有该字段再问使用者，名字通常看不出窗口大小）"
+          "上下文窗口大（先看 provider 的 contexts：被它覆盖到的模型直接采用，未覆盖的仍须问使用者或查文档；名字通常看不出窗口大小）"
         ],
         "prefer": "窗口大且便宜；常与 fast/cheap 复用同一批模型（classifier 除外）"
       }

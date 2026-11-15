@@ -79,6 +79,10 @@ def main():
     rc, out = run_validate({"groups": groups}, known)
     print("validation:")
     print(out)
+    if rc != 0:
+        # 退出码契约是「0=诊断完成（含发现问题）」，别让调用方拿 && 当闸门
+        print("note: doctor still exits 0 with findings — read the validation section above;"
+              " do not use `doctor.py && ...` as a gate.")
     print()
     print(SMOKE)
     return 0

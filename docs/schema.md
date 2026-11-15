@@ -30,7 +30,7 @@
 | `levels` | string[] | 提供给 agent 的推理档位 | 实测 | 语义校验（档位集合） |
 | `effort` | string | `agent`（默认）= 每个请求按 agent 要求的强度推理，但以成员自身 `:<effort>` 为限；`auto` = classifier 每回合选强度（需 classifier） | CLI | 语义校验（auto\|agent 枚举；auto 需 classifier） |
 | `disabled` | bool | 停用该组 | 实测 | 类型/结构校验（bool） |
-| `hidden` | bool | 隐藏。**`true` + `members:null` + `name:""` 是 magpie 的「墓碑」**：`magpie group rm <auto-组>` 移除一个自动发现的组时落盘这个形态，用来「保持已移除」（CLI 回显 `magpie found it, so it's hidden`，`magpie group restore auto` 可恢复）。**不是坏配置**，工具豁免其成员非空要求 | 实测 | 白名单放行；墓碑豁免空成员检查 |
+| `hidden` | bool | 隐藏。**`true` + `members:null` + `name:""` 是 magpie 的「墓碑」**：`magpie group rm <auto-组>` 移除一个自动发现的组时落盘这个形态，用来「保持已移除」（CLI 回显 `magpie found it, so it's hidden`，`magpie group restore <auto-组 id>`（如 `auto-shared`）可恢复——参数是**具体组 id**，写 `restore auto` 会报 `no group "auto"`（实测））。**不是坏配置**，工具豁免其成员非空要求 | 实测 | 白名单放行；墓碑豁免空成员检查 |
 | `unlists` | bool | `true` = 该组模型不进 agent 可见清单、只经组提供（CLI `listed=no`）。`listed=yes` 是**删除该键**，不是写 `false` | 实测 | 类型校验（bool） |
 | `weights` | object | routing=weight 的权重份额：**键 = 完整成员引用（含 `:effort`）**，值 = 整数 1–1000，未列出的成员默认 1。CLI 旗标是 `weight=<model>=<n>`；非成员键 CLI 硬报错、JSON 路径静默忽略。**范围是 CLI 写入约束**：手写 2000 或 0，magpie 读路径照常生效（实测显示 `weight 2000`），但此后对该组的任何 `group set` 都会被拒（`a member's weight is 1 to 1000`）——所以工具仍按 1..1000 判失败 | 实测 | 语义校验（键须为本组成员、值为 1..1000 整数、排除 bool；含 `match` 的组豁免成员资格） |
 | `fast` / `ultra` | string[] | 按厂商 fast / Ultrafast 模式发送的模型清单。**元素 = 完整成员引用（含 `:effort`）**，与 `weights` 同规矩；裸 `provider/model` 在 JSON 路径被**静默忽略**，CLI 路径则硬报错 `... is not in the group`。设 `ultra` 会自动把该模型补进 `fast` | 实测 | 语义校验（元素须为本组成员） |
@@ -180,14 +180,14 @@
 | `rotate` | 每发一条消息交给下一个成员的账号/key；工具调用留在同一个上 | 官方文档 |
 | `usage` | 剩余额度最多的账号/key 排第一 | 官方文档 |
 | `pace` | 每周剩余额度 ÷ 距重置小时数，最高者优先；到期前用完，减少重置浪费 | 官方文档 |
-| `weight` | 按权重比例分配、均匀穿插（权重 3 每拿 3 个，权重 1 拿 1 个）；休息中的成员退出本轮、下一成员兜底；权重经 group `weight` 设置（值形态待核） | 官方文档+CLI |
+| `weight` | 按权重比例分配、均匀穿插（权重 3 每拿 3 个，权重 1 拿 1 个）；休息中的成员退出本轮、下一成员兜底；权重经 group **`weights`** 设置（值形态见上方字段表，已实测） | 官方文档+CLI+实测 |
 | `fast` | 最近回答最快（首字时间/输出速度）的成员优先；相差不到一成保持原序 | 官方文档 |
 | `cheap` | 此刻最便宜的成员优先（每百万 token 价格 × 倍率，含高峰计价）；仅限路由组 | 官方文档 |
 | `free` | **Free first**：先把「算作免费」的供应商/模型花掉，再动付费的。哪些算免费由**供应商级** `countFree`（CLI `magpie provider set <id> free=yes`）标记；价格与 Usage 成本仍按原值显示。`free` 也是供应商级 routing 值之一 | 实测（落盘 `countFree:true` + 厂商自述帮助文本）；运行时选路未实测 |
 | `expiring` | 免费额度优先、最先到期的先用；免费额度用尽才用付费 | CLI |
 | `manual` | 只路由到你选定的模型（`pick=<model>`，或在组卡片上点选）；其他成员与规则等待，直到另选或改路由，**不做故障转移** | CLI |
 
-`manual` 在 routing 枚举内（旧文档「11 模式、manual 不在枚举内」是错的）；手动选择经组级 `pick` 字段（JSON 名二进制确证，值形态待核）。
+`manual` 在 routing 枚举内（旧文档「11 模式、manual 不在枚举内」是错的）；手动选择经组级 `pick` 字段（单个完整成员引用，含 `:effort`；值形态见上方字段表，已实测）。
 
 ## affinity：5 种会话粘性
 
@@ -209,7 +209,7 @@
 | 组级 `compact: <number>` | group / number | 压缩阈值（token 数） |
 | 默认兜底 | 无字段 | 未命中任何规则 → 按组的 **routing 模式**路由（`order` 才是首成员优先；`usage` 按额度分摊等）。不是 compact |
 
-**不强制 `compact:true`**——工具要求**所有组** `members` 非空（不只含 rules 的组）；兜底按组 routing 模式走。旧文档「必须含 compact:true 兜底规则」的说法已作废。
+**不强制 `compact:true`**——工具要求每组 **`members` 或 `match` 至少一个非空**（不只含 rules 的组；`hidden:true` 墓碑豁免）；兜底按组 routing 模式走。旧文档「必须含 compact:true 兜底规则」的说法已作废。
 
 ## 默认兜底与规则命中
 
@@ -251,6 +251,20 @@ CLI 命令名注意：是 **`magpie group rule add …`**，没有顶层 `magpie
 
 > 以上是 **CLI 写入路径**的行为。手写 JSON 里「有 classifier 但无消费者」会怎样**未实测**，故校验器不对此报错——但按上表，这种配置在 magpie 侧没有意义，别这么写。
 
+## provider 级：与角色映射相关的字段（实测）
+
+路由层之外，探测供应商时会看到几个与**选型**有关的字段。形态来自本机配置解析（只取字段名与类型，不读密钥）+ CLI 写入探针；**`countFree` 仅见于后者**（本机无供应商填它）：
+
+| 字段 | 形态 | 对选型的意义 |
+|---|---|---|
+| `models` | **裸名字符串数组**（可含冒号，如虚构示例 `cn:coder-a`） | 只有名字，**没有**多模态/推理档等能力元数据；引用时按供应商 id 拼成 `provider/model` |
+| `contexts` | 对象：**模型名 → 上下文长度整数**（可用 `"*"` 通配全部模型） | `context/long` 角色对**被覆盖到的模型**可直接据此判断窗口（含 `*` 通配）；**未列出的模型仍须问使用者或查文档**。并非每家都填，也可能只覆盖该供应商的一部分模型（实测有一家 5 个模型只列了 1 条） |
+| `pickedFrom` | 字符串数组 | 目录候选来源，不是能力元数据 |
+| `catalog` | 字符串 | 目录标识，不是能力元数据 |
+| `countFree` | bool | 标记「算作免费」的额度，供 routing `free`（Free first）先花 |
+
+**因此**：`templates/roles.json` 的 `signals.needs` 里，上下文窗口优先查 `contexts`；多模态与推理档仍需向使用者确认，**禁止从模型名臆断**。
+
 ## 待验证清单
 
 **已解决**（原清单移除）：
@@ -262,8 +276,8 @@ CLI 命令名注意：是 **`magpie group rule add …`**，没有顶层 `magpie
 5. ~~规则 `when` 字符串字段~~ → **反转**：JSON 字段是 `where`（`[{field,op,value}]` 对象数组）；`when` 只是 CLI 旗标与日志表示法（实测）。
 6. ~~`time`/`days`/`tz`/`except-folders`/`pause` 写法~~ → `time` 是对象 `{from,to,days,zone}`；`exceptFolders` 驼峰；`pause` 为 `{use:<model>, pause:true}`（实测）。
 7. ~~`at`/规则级 `classifier`~~ → CLI 便利写法（插入位置 1-indexed / 设组级 classifier），不是 rule JSON 字段。
-8. ~~`weight`/`fast`/`ultra`/`pick`/`listed`/`family` 的 JSON 字段名~~ → 二进制确证全部存在（值形态仍待核，见下）。
-9. ~~routing `free`/`expiring` 存在性、`expiring` 语义~~ → 二进制确证存在；`expiring` = 免费额度优先、最先到期先用（CLI 示例）。`free` 语义仍待核。
+8. ~~`weight`/`fast`/`ultra`/`pick`/`listed`/`family` 的 JSON 字段名~~ → 已结清：真键名是 `weights`/`unlists`（见第 13 条反转），值形态见字段表。
+9. ~~routing `free`/`expiring` 存在性、`expiring` 语义~~ → 二进制确证存在；`expiring` = 免费额度优先、最先到期先用（CLI 示例）。`free` 语义已结清（见第 14 条与 routing 表）。
 10. ~~组级 `effort:"agent"` 语义~~ → CLI 已定义：每个请求按 agent 要求的强度推理，但以成员自身 `:<effort>` 为限（默认 `agent`）。
 11. ~~`manual` 模式~~ → routing 12 值含 `manual`，经 `pick=<model>` 使用。
 12. ~~默认兜底~~ → 纠正：按组 routing 模式路由，不是普适的成员顺序/首成员。

@@ -851,6 +851,7 @@ if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: doctor crashed on null membe
 grep -q "members=0" <<< "$OUT"
 grep -q "needs members or match" <<< "$OUT"
 grep -q "rules: must be list" <<< "$OUT"
+grep -q 'do not use `doctor.py && ...` as a gate' <<< "$OUT"
 OUT="$(python3 -I scripts/apply.py "$TMP/ref-draft.json" "$TMP/null-members.json" 2>&1)" && { echo "FAIL: null-members group passed validation"; exit 1; }
 if grep -q "Traceback" <<< "$OUT"; then echo "FAIL: apply crashed on null members: $OUT"; exit 1; fi
 grep -q "nothing merged" <<< "$OUT"
@@ -1112,6 +1113,13 @@ for label, old_g, new_g in (
                          {"groups": [{"id": "g-code", **new_g}]}, write=write)
         assert rc == 0, out
         assert SEC not in out and URL not in out and EP not in out, f"{label} leaked (write={write}):\n{out}"
+# 组 id 是 endpoint 形态时 validate 不拦（SECRET_VALUE 无 URL 形态），
+# 而 keep/add 列表不经 group_diff —— label() 必须挡住
+rc, out, _ = run({**prov, "groups": [{"id": EP, "routing": "order", "members": ["acme/code-standard"]},
+                                     {"id": "g-a", "members": ["acme/code-standard"]}]},
+                 {"groups": [{"id": "g-a", "members": ["acme/code-pro"]}]})
+assert rc == 0 and EP not in out and "<id " in out, out
+
 # 组 id 是凭据形态时走不到 diff：validate 先拒（两侧 id 都会进合并结果）
 rc, out, _ = run({**prov, "groups": [{"id": SEC, "members": ["acme/code-standard"]}]},
                  {"groups": [{"id": SEC, "members": ["acme/code-pro"]}]})

@@ -28,7 +28,7 @@ Your providers and keys **stay untouched**; this repo only touches the routing l
 
 Routing is split into two layers so intent judgment and model selection stay separate:
 
-- **Main router (`auto`)** — a small fast **classifier** judges the intent of each turn, then dispatches to a task subgroup via `use=group/<id>`. It does no model selection itself. When no intent matches, it falls back to its first member (the everyday-coding subgroup).
+- **Main router (`auto`)** — a small fast **classifier** judges the intent of each turn, then dispatches to a task subgroup via `use=group/<id>`. It does no model selection itself. When no intent matches, it falls back **by the group's routing mode**; the template uses `order`, so that means its first member (the everyday-coding subgroup).
 - **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning **multiple model members** and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix. A role maps to an ordered model list, so each subgroup can hold several models (e.g. a primary coder → a backup coder → a cheap fallback).
 
 The classifier is a **separate role**: it only judges intent and is **never** a routing member, rule target, or fallback.
@@ -45,6 +45,8 @@ Strategies aren't bound to specific models. Six capability roles are mapped to *
 | `design/ui` | UI, styling, visual reproduction (incl. screenshots) |
 | `fast/cheap` | Simple Q&A, lightweight fallback (not the classifier) |
 | `context/long` | Long-context summarization |
+
+**How models get picked for a role:** `templates/roles.json` carries machine-applicable `signals` per role — the model name is lowercased and split into segments, and a token counts only on a **whole-segment** match (substring matching would misread model names that happen to contain `mini` or `max`). Within a role a negative signal vetoes a positive one; a model matching several roles is left for you to decide; a model matching **no** signal is still listed for your confirmation rather than dropped. Capability data is not guessed from names: context windows come from the provider's `contexts` field **for the models it covers** (it may list only some of them, or use `*`); anything it doesn't cover, plus multimodal support and reasoning tiers, must be confirmed with you.
 
 Seven mutually exclusive intents (test / Q&A / implement / refactor / architecture / UI / review) + a reasoning trigger + a compaction rule cover the coding loop. See the [routing pattern library](docs/patterns.md).
 
@@ -63,7 +65,7 @@ examples/demo/             # end-to-end example with a fictional provider
 scripts/
   render.py                # expand role->model-list mapping into the template (multi-model subgroups)
   validate.py              # routing-layer draft validator (group refs, classifier separation)
-  apply.py                 # upsert-merge a draft into local config (dry-run by default, shows field changes for replaced groups; --write backs up, verifies on disk, auto-restores on failure)
+  apply.py                 # upsert-merge a draft into local config (dry-run by default, shows field changes for replaced groups, never echoes credentials; --write backs up, verifies on disk, auto-restores on failure)
   doctor.py                # read-only diagnosis of existing config (+ manual smoke-test steps)
   e2e.sh                   # isolated acceptance test
 ```

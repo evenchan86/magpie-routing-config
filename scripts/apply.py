@@ -308,10 +308,14 @@ def main():
     def n_members(gid):
         g = next((x for x in merged if x.get("id") == gid), {})
         return len(g.get("members") or [])
+    def label(gid):
+        """组 id 同样过闸门：凭据形态会被 validate 先拒，但 endpoint 形态不会，
+        而 keep/add 列表里的 id 不经 group_diff，故这里必须自查。"""
+        return f"<id {len(gid)} chars>" if secretish(gid) else gid
     print("merge plan (groups only; providers untouched):")
-    print(f"  add     ({len(added)}): " + (", ".join(f"{g}[{n_members(g)}]" for g in added) or "-"))
-    print(f"  replace ({len(replaced)}): " + (", ".join(f"{g}[{n_members(g)}]" for g in replaced) or "-"))
-    print(f"  keep    ({len(kept)}): " + (", ".join(kept) or "-"))
+    print(f"  add     ({len(added)}): " + (", ".join(f"{label(g)}[{n_members(g)}]" for g in added) or "-"))
+    print(f"  replace ({len(replaced)}): " + (", ".join(f"{label(g)}[{n_members(g)}]" for g in replaced) or "-"))
+    print(f"  keep    ({len(kept)}): " + (", ".join(label(g) for g in kept) or "-"))
     # 被替换的组：显示组内字段级变化，让使用者能知情确认（不是只看计数）
     if replaced:
         old_by_id = {g.get("id"): g for g in existing}
@@ -320,9 +324,9 @@ def main():
             o, n = old_by_id.get(gid, {}), new_by_id.get(gid, {})
             lines = group_diff(o, n, echo=not (secretish(o) or secretish(n)))
             if not lines:
-                print(f"    {gid}: identical (replaced with the same content)")
+                print(f"    {label(gid)}: identical (replaced with the same content)")
             else:
-                print(f"    {gid}:")
+                print(f"    {label(gid)}:")
                 for line in lines:
                     print(f"      {line}")
 
