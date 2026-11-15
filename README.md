@@ -2,6 +2,8 @@
 
 **English** | [中文](README.zh.md)
 
+![magpie-routing-config — your agent designs a two-layer routing config from your own models, keys untouched](assets/readme/hero.svg)
+
 **Open-source routing-strategy blueprints for [magpie](https://usemagpie.ai)** — distills "how to design magpie routing" into docs + templates + an agent workflow. Contains no real keys or machine-specific config.
 
 > Independent community project; not affiliated with or endorsed by the official [magpie](https://github.com/yetone/magpie) team.
@@ -22,11 +24,15 @@ Then tell your agent (Claude Code / Codex / …):
 
 The agent will: probe your local config schema → discover your providers and models → propose a role→ordered-model-list mapping (**you confirm**) → render a two-layer routing draft → validate → back up and merge-write (**you confirm**).
 
+![Agent workflow: six stages — probe schema, probe models, map roles, render, validate, apply — with two human confirmations](assets/readme/workflow.svg)
+
 Your providers and keys **stay untouched**; this repo only touches the routing layer (groups/rules/classifier).
 
 ## Core concept: two-layer intent dispatch
 
 Routing is split into two layers so intent judgment and model selection stay separate:
+
+![Two-layer intent dispatch: a classifier in the auto router judges each turn and dispatches to one of eight task subgroups, each with its own models and routing mode](assets/readme/dispatch.svg)
 
 - **Main router (`auto`)** — a small fast **classifier** judges the intent of each turn, then dispatches to a task subgroup via `use=group/<id>`. It does no model selection itself. When no intent matches, it falls back **by the group's routing mode**; the template uses `order`, so that means its first member (the everyday-coding subgroup).
 - **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning **multiple model members** and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix. A role maps to an ordered model list, so each subgroup can hold several models (e.g. a primary coder → a backup coder → a cheap fallback).

@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="t d">
+  <title id="t">Agent workflow</title>
+  <desc id="d">Six stages: probe schema, probe models, map roles, render, validate, apply. Two stages pause for your confirmation: mapping roles to models, and applying the merged draft. Your providers and keys are never modified.</desc>
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8A94A0"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="300" rx="26" fill="#0B0E11"/>
+  <rect x="0.75" y="0.75" width="1198.5" height="298.5" rx="25" fill="none" stroke="#2A323C" stroke-width="1.5"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="56" y="62" font-size="32" font-weight="700" fill="#F4F6F8">Agent workflow</text>
+    <text x="56" y="94" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">six stages · two human confirmations · keys untouched</text>
+  </g>
+
+  <!-- connectors -->
+  <g stroke="#8A94A0" stroke-width="1.5">
+    <line x1="220" y1="175" x2="234" y2="175" marker-end="url(#ah)"/>
+    <line x1="398" y1="175" x2="412" y2="175" marker-end="url(#ah)"/>
+    <line x1="576" y1="175" x2="590" y2="175" marker-end="url(#ah)"/>
+    <line x1="754" y1="175" x2="768" y2="175" marker-end="url(#ah)"/>
+    <line x1="932" y1="175" x2="946" y2="175" marker-end="url(#ah)"/>
+  </g>
+
+  <!-- stages -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <!-- 1 probe schema -->
+    <rect x="56" y="120" width="164" height="110" rx="14" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <circle cx="138" cy="150" r="17" fill="#53C8E8"/>
+    <text x="138" y="156" font-size="18" font-weight="700" fill="#0B0E11">1</text>
+    <text x="138" y="192" font-size="20" font-weight="700" fill="#F4F6F8">Probe schema</text>
+    <text x="138" y="216" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">field names</text>
+    <!-- 2 probe models -->
+    <rect x="234" y="120" width="164" height="110" rx="14" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <circle cx="316" cy="150" r="17" fill="#53C8E8"/>
+    <text x="316" y="156" font-size="18" font-weight="700" fill="#0B0E11">2</text>
+    <text x="316" y="192" font-size="20" font-weight="700" fill="#F4F6F8">Probe models</text>
+    <text x="316" y="216" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">id + models</text>
+    <!-- 3 map roles (confirm) -->
+    <rect x="412" y="120" width="164" height="110" rx="14" fill="#1A1710" stroke="#E8B44C" stroke-width="1.5"/>
+    <circle cx="494" cy="150" r="17" fill="#E8B44C"/>
+    <text x="494" y="156" font-size="18" font-weight="700" fill="#0B0E11">3</text>
+    <text x="494" y="192" font-size="20" font-weight="700" fill="#F4F6F8">Map roles</text>
+    <text x="494" y="216" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#E8B44C">you confirm</text>
+    <!-- 4 render -->
+    <rect x="590" y="120" width="164" height="110" rx="14" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <circle cx="672" cy="150" r="17" fill="#53C8E8"/>
+    <text x="672" y="156" font-size="18" font-weight="700" fill="#0B0E11">4</text>
+    <text x="672" y="192" font-size="20" font-weight="700" fill="#F4F6F8">Render</text>
+    <text x="672" y="216" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">template</text>
+    <!-- 5 validate -->
+    <rect x="768" y="120" width="164" height="110" rx="14" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <circle cx="850" cy="150" r="17" fill="#53C8E8"/>
+    <text x="850" y="156" font-size="18" font-weight="700" fill="#0B0E11">5</text>
+    <text x="850" y="192" font-size="20" font-weight="700" fill="#F4F6F8">Validate</text>
+    <text x="850" y="216" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">full checks</text>
+    <!-- 6 apply (confirm) -->
+    <rect x="946" y="120" width="164" height="110" rx="14" fill="#1A1710" stroke="#E8B44C" stroke-width="1.5"/>
+    <circle cx="1028" cy="150" r="17" fill="#E8B44C"/>
+    <text x="1028" y="156" font-size="18" font-weight="700" fill="#0B0E11">6</text>
+    <text x="1028" y="192" font-size="20" font-weight="700" fill="#F4F6F8">Apply</text>
+    <text x="1028" y="216" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#E8B44C">you confirm</text>
+  </g>
+
+  <!-- legend -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
+    <circle cx="62" cy="266" r="6" fill="#53C8E8"/>
+    <text x="78" y="272" fill="#8A94A0">automated</text>
+    <circle cx="230" cy="266" r="6" fill="#E8B44C"/>
+    <text x="246" y="272" fill="#8A94A0">you confirm</text>
+  </g>
+</svg>

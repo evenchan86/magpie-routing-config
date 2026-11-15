@@ -2,6 +2,8 @@
 
 [English](README.md) | **中文**
 
+![magpie-routing-config——你的 agent 基于你本机的模型设计两层路由配置，密钥保持原样](assets/readme/hero.svg)
+
 **开源的 [magpie](https://usemagpie.ai) 路由策略架构方案**：把「如何设计 magpie 路由」沉淀为文档 + 模板 + agent 工作流。不含任何真实密钥或具体机器配置。
 
 > 独立社区项目，与 [magpie](https://github.com/yetone/magpie) 官方团队无隶属或背书关系。
@@ -22,11 +24,15 @@ git clone https://github.com/evenchan86/magpie-routing-config.git && cd magpie-r
 
 agent 会依次：实测你本机的配置 schema → 探测你已有的供应商和模型 → 给出「角色 → 有序模型列表」映射建议（**你确认**）→ 渲染两层路由草案 → 校验 → 备份后合并写入（**你确认**）。
 
+![Agent 工作流：六个阶段——实测 schema、探测模型、映射角色、渲染、校验、应用——其中两处需你确认](assets/readme/workflow.svg)
+
 你的供应商和密钥**保持原样**，仓库只涉及路由层（groups/rules/classifier）。
 
 ## 核心概念：两层意图分发
 
 路由分成两层，让「意图判断」与「模型选择」各司其职：
+
+![两层意图分发：auto 主路由里的 classifier 判断每回合意图，分发到八个任务子组，各组有自己的模型与路由模式](assets/readme/dispatch.svg)
 
 - **主路由（`auto`）**——一个小而快的 **classifier** 判断每回合的意图，再用 `use=group/<id>` 分发到任务子组。它自己不做模型选择。没有意图命中时，**按组的 routing 模式**兜底；模板用 `order`，故落到首位成员（日常编码子组）。
 - **任务子组**——8 个组（`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`），各自管理**多个模型成员**与路由模式（`order` 有序故障转移、`usage` 额度分摊）。每模型推理强度用成员后缀 `:effort` 设定。角色映射到有序模型列表，因此每个子组可容纳多个模型（如主力编码 → 备用编码 → 廉价兜底）。

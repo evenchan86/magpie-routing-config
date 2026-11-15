@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="t d">
+  <title id="t">Two-layer intent dispatch</title>
+  <desc id="d">A classifier in the auto router judges each turn's intent and dispatches to one of eight task subgroups. Each subgroup owns model members and a routing mode: order for ordered failover, usage for quota spreading. The classifier is never a routing member.</desc>
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#53C8E8"/>
+    </marker>
+    <marker id="ahm" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8A94A0"/>
+    </marker>
+    <marker id="ahml" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M6,0 L0,3 L6,6 Z" fill="#8A94A0"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="680" rx="26" fill="#0B0E11"/>
+  <rect x="0.75" y="0.75" width="1198.5" height="678.5" rx="25" fill="none" stroke="#2A323C" stroke-width="1.5"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="56" y="62" font-size="32" font-weight="700" fill="#F4F6F8">Two-layer intent dispatch</text>
+    <text x="56" y="94" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">intent judgment and model selection stay separate</text>
+  </g>
+
+  <!-- layer 1 -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <rect x="56" y="140" width="150" height="44" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="131" y="168" font-size="18" fill="#F4F6F8" text-anchor="middle">your turn</text>
+    <line x1="206" y1="162" x2="246" y2="162" stroke="#53C8E8" stroke-width="1.5" marker-end="url(#ah)"/>
+
+    <rect x="250" y="122" width="400" height="98" rx="14" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="274" y="154" font-size="22" font-weight="700" fill="#F4F6F8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">auto router</text>
+    <text x="274" y="184" font-size="18" fill="#53C8E8">classifier: intent/judge</text>
+    <text x="274" y="208" font-size="18" fill="#8A94A0">judges intent → use=group/&lt;id&gt;</text>
+
+    <rect x="700" y="122" width="444" height="98" rx="14" fill="#0F1418" stroke="#2A323C" stroke-width="1.5"/>
+    <rect x="700" y="122" width="5" height="98" rx="2" fill="#53C8E8"/>
+    <text x="726" y="154" font-size="20" font-weight="700" fill="#53C8E8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">classifier is separate</text>
+    <text x="726" y="184" font-size="18" fill="#F4F6F8">never a routing member, rule target,</text>
+    <text x="726" y="208" font-size="18" fill="#F4F6F8">or fallback</text>
+  </g>
+
+  <!-- fan-out to 8 subgroups -->
+  <g stroke="#53C8E8" stroke-width="1.5" opacity="0.45">
+    <line x1="450" y1="220" x2="118" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="254" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="390" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="526" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="662" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="798" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="934" y2="298" marker-end="url(#ah)"/>
+    <line x1="450" y1="220" x2="1070" y2="298" marker-end="url(#ah)"/>
+  </g>
+
+  <!-- 8 subgroup chips -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" text-anchor="middle">
+    <!-- row: id + mode. order=#53C8E8 usage=#E8B44C -->
+    <g>
+      <rect x="56" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="118" y="334" font-size="18" fill="#F4F6F8">g-code</text>
+      <text x="118" y="362" font-size="18" fill="#53C8E8">order</text>
+    </g>
+    <g>
+      <rect x="192" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="254" y="334" font-size="18" fill="#F4F6F8">g-test</text>
+      <text x="254" y="362" font-size="18" fill="#E8B44C">usage</text>
+    </g>
+    <g>
+      <rect x="328" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="390" y="334" font-size="18" fill="#F4F6F8">g-light</text>
+      <text x="390" y="362" font-size="18" fill="#E8B44C">usage</text>
+    </g>
+    <g>
+      <rect x="464" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="526" y="334" font-size="18" fill="#F4F6F8">g-heavy</text>
+      <text x="526" y="362" font-size="18" fill="#53C8E8">order</text>
+    </g>
+    <g>
+      <rect x="600" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="662" y="334" font-size="18" fill="#F4F6F8">g-arch</text>
+      <text x="662" y="362" font-size="18" fill="#53C8E8">order</text>
+    </g>
+    <g>
+      <rect x="736" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="798" y="334" font-size="18" fill="#F4F6F8">g-ui</text>
+      <text x="798" y="362" font-size="18" fill="#53C8E8">order</text>
+    </g>
+    <g>
+      <rect x="872" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="934" y="334" font-size="18" fill="#F4F6F8">g-review</text>
+      <text x="934" y="362" font-size="18" fill="#53C8E8">order</text>
+    </g>
+    <g>
+      <rect x="1008" y="300" width="124" height="84" rx="12" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+      <text x="1070" y="334" font-size="18" fill="#F4F6F8">g-compact</text>
+      <text x="1070" y="362" font-size="18" fill="#53C8E8">order</text>
+    </g>
+  </g>
+
+  <!-- fallback note -->
+  <text x="56" y="422" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8A94A0">no intent matched → the group's routing mode (order → first member, g-code)</text>
+
+  <!-- routing-mode specimens -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <rect x="56" y="452" width="540" height="176" rx="14" fill="#0F1418" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="80" y="486" font-size="18" fill="#53C8E8">order · ordered failover</text>
+    <text x="80" y="512" font-size="18" fill="#8A94A0">e.g. g-code</text>
+    <rect x="80" y="528" width="200" height="42" rx="10" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="180" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/code:high</text>
+    <line x1="280" y1="549" x2="322" y2="549" stroke="#8A94A0" stroke-width="1.5" marker-end="url(#ahm)"/>
+    <rect x="326" y="528" width="230" height="42" rx="10" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="441" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/cheap:medium</text>
+    <text x="80" y="602" font-size="18" fill="#8A94A0">primary first, then fall back</text>
+
+    <rect x="624" y="452" width="520" height="176" rx="14" fill="#0F1418" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="648" y="486" font-size="18" fill="#E8B44C">usage · quota spreading</text>
+    <text x="648" y="512" font-size="18" fill="#8A94A0">e.g. g-test</text>
+    <rect x="648" y="528" width="180" height="42" rx="10" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="738" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/a:high</text>
+    <line x1="836" y1="549" x2="864" y2="549" stroke="#8A94A0" stroke-width="1.5" marker-start="url(#ahml)" marker-end="url(#ahm)"/>
+    <rect x="872" y="528" width="180" height="42" rx="10" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
+    <text x="962" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/b:high</text>
+    <text x="648" y="602" font-size="18" fill="#8A94A0">spread requests by quota</text>
+  </g>
+</svg>
