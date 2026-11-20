@@ -785,7 +785,9 @@ def main():
         print(out)
         return restore("post-write validation of the on-disk config FAILED")
     print(f"OK: merged {len(merged)} group(s); post-write validation PASS")
-    print("next: point your agent at group/auto in magpie, send a test request, and check the log (see doctor.py).")
+    print("next: point your agent at the group you want (magpie <agent> group/<id>), send one request"
+          " from a NEW session, then check that row in the routing log carries group.id"
+          " (doctor.py prints the wiring smoke steps; wiring changes only affect new sessions).")
     # magpie 曾被观测到在之后的回写里重排 members（本机一次观测，触发规则未知，见 docs/patterns.md 坑 3）。
     # 刚写完的读回几乎总是等于草案（只有 magpie 恰好在写入窗口内插一手才会不同，本机没观测到）——
     # 那种断言查不到漂移，所以不做。漂移要这样查：稍后用同一份草案再跑一次 dry-run。
