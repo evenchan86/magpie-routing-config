@@ -84,6 +84,8 @@
 
 ## 文档索引
 
+- `CHANGELOG.md`：对使用者可见的变更记录（按日期，每条括注提交号；本仓库不打版本标签，版本即 git 提交号）。
+- `CONTRIBUTING.md`：贡献指南（环境与版本底线、怎么跑验收、怎么启用提交闸、公开面怎么定义、PR 期望、维护者侧 review 档案流程、许可）。
 - `docs/concepts.md`：两层路由、池路由 vs 故障转移、compact vs 默认兜底、classifier 独立、affinity 粘性、配置与日志区分。
 - `docs/schema.md`：字段参考（逐字段标来源与校验状态）、routing 12 模式（含 manual）/ affinity 5 值语义、member 写法、组嵌套、待验证清单。
 - `docs/patterns.md`：13 条模式——主模式（两层意图分发）+ 子组模式（池、每模型强度、多通道分摊、classifier 独立）+ 通用模式 6–13（含会话粘性、主链锚定）+ 复现配方 + 真实案例与「落盘与观测的坑」。

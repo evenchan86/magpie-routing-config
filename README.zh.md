@@ -12,6 +12,13 @@
 
 已安装 [magpie](https://usemagpie.ai)（macOS 菜单栏 AI 路由网关桌面应用；[GitHub](https://github.com/yetone/magpie)）、已配好模型供应商，想优化路由策略的人。你不需要研究配置格式——把本仓库交给你的 agent 即可。
 
+## 前置条件
+
+- **装好 [magpie](https://usemagpie.ai) 并配好供应商的 macOS**——本仓库改的是你已经在跑的 magpie 的路由层，既不安装也不替换 magpie。下面的验收套件既不需要 magpie，也不需要你的供应商。
+- **Python 3.7+**——只用标准库，不需要 `pip install` 任何东西。macOS 自带的 `/usr/bin/python3`（3.9）就能跑脚本。下面的验收套件要 **Python 3.12+**（其中一个夹具要编码 1000 层嵌套的 JSON 值，更老的 CPython 会在 `json` 里抛 `RecursionError`——套件开头会先查版本并说人话）。
+- **bash** 与 **git**——跑验收套件与提交闸用。
+- **magpie v0.1.4130** 是字段参考实测对齐的版本（[docs/schema.md](docs/schema.md)）；[docs/patterns.md](docs/patterns.md) 与 [docs/concepts.md](docs/concepts.md) 里的路由观测跑在 v0.1.4178 上。其它版本预计可用但未实测；工作流第一步本来就会实测你本机的配置。
+
 ## 30 秒上手
 
 ```bash
@@ -60,6 +67,8 @@ classifier 是**独立角色**：只做意图判断，**绝不**作为路由成�
 
 ```text
 AGENTS.md                  # agent 工作流与红线（入口）
+CONTRIBUTING.md            # 贡献指南：怎么跑验收、怎么启用提交闸、PR 期望
+CHANGELOG.md               # 对使用者可见的变更记录（版本即 git 提交号）
 docs/
   concepts.md              # 路由概念（两层、池路由 vs 故障转移）
   schema.md                # 配置字段参考（含来源与存疑标注）
@@ -68,11 +77,12 @@ templates/
   roles.json               # 角色定义、匹配信号与映射
   groups.template.json     # 两层路由模板（角色占位）
 examples/demo/             # 虚构供应商的完整走通示例
+.githooks/                # 仓库自带的 git hook（用 core.hooksPath 启用）
 scripts/
   render.py                # 把角色→模型列表映射展开进模板（多模型子组）
   validate.py              # 路由层草案校验器（组引用、classifier 分离）
   apply.py                 # 草案按 id upsert 合并进本机配置（默认 dry-run，展示被替换组的组内字段级变化、不回显凭据；--write 先备份、写后读回校验、失败自动恢复）
-  docgate.py               # 文档/代码漂移闸：改了公开面却没改文档就失败
+  docgate.py               # 两道闸共用的共享判定库：公开面提取、豁免解析、CLI 契约解析
   commit-gate.py           # 贡献者与 git hook 跑的提交闸（查文档同步；--docs-only 不查 review 档案）
   doctor.py                # 只读诊断现有配置（+ schema 合法但吃亏或不结实的形状提示，+ 接线冒烟步骤，含 CLI 写操作）
   e2e.sh                   # 隔离验收
@@ -81,6 +91,22 @@ scripts/
 ## 示例
 
 [examples/demo/](examples/demo/README.md) 用虚构供应商 `acme/*` 演示从本机配置到两层路由产物的全过程。
+
+## 验收测试
+
+仓库自带隔离验收套件——假 HOME、临时配置，不碰你真实的 magpie 环境：
+
+```bash
+bash scripts/e2e.sh
+```
+
+最后一行应为 `E2E PASS: 143 checks`（条数随套件增长，以实际输出为准），退出码 0。
+
+## 支持与反馈
+
+提问、纠错、「这跟我本机的 magpie 对不上」这类反馈都发到 [GitHub issues](https://github.com/evenchan86/magpie-routing-config/issues)——请附上你的 magpie 版本、Python 版本、跑的命令，以及已把可疑内容掩掉（保留形态、不写真值）的输出。
+
+要改这个仓库本身：见 [CONTRIBUTING.md](CONTRIBUTING.md)——怎么跑验收、怎么启用提交闸、PR 期望什么。对使用者可见的变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 诚实声明
 

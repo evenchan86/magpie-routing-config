@@ -12,6 +12,13 @@
 
 People who already run [magpie](https://usemagpie.ai) (a macOS menu-bar AI routing gateway; [GitHub](https://github.com/yetone/magpie)) with model providers configured, and want better routing. You don't need to study the config format — hand this repo to your agent.
 
+## Prerequisites
+
+- **macOS with [magpie](https://usemagpie.ai) installed and your providers configured** — this repo edits the routing layer of a magpie you already run; it neither installs nor replaces magpie. The acceptance suite below needs neither magpie nor your providers.
+- **Python 3.7+** — standard library only, nothing to `pip install`. The scripts run on macOS's own `/usr/bin/python3` (3.9). The acceptance suite below needs **Python 3.12+** (one of its fixtures encodes a 1000-level nested JSON value; older CPython raises `RecursionError` inside `json` — the suite checks this up front and says so in plain words).
+- **bash** and **git** — to run the acceptance suite and the commit gate.
+- **magpie v0.1.4130** is the version the field reference was verified against ([docs/schema.md](docs/schema.md)); the routing-observation notes in [docs/patterns.md](docs/patterns.md) and [docs/concepts.md](docs/concepts.md) were measured on v0.1.4178. Other versions are expected to work but are not verified; the workflow probes *your* config first anyway.
+
 ## 30-second quickstart
 
 ```bash
@@ -60,6 +67,8 @@ Seven mutually exclusive intents (test / Q&A / implement / refactor / architectu
 
 ```text
 AGENTS.md                  # agent workflow & red lines (entry point)
+CONTRIBUTING.md            # how to contribute, how to run the suite, how to enable the commit gate
+CHANGELOG.md               # user-visible change record (the version is the git commit)
 docs/
   concepts.md              # routing concepts (two layers, pools vs failover)
   schema.md                # config field reference (with source & confidence notes)
@@ -68,11 +77,12 @@ templates/
   roles.json               # role definitions, matching signals & mapping
   groups.template.json     # two-layer routing template (role placeholders)
 examples/demo/             # end-to-end example with a fictional provider
+.githooks/                # the repo's own git hook (enable with core.hooksPath)
 scripts/
   render.py                # expand role->model-list mapping into the template (multi-model subgroups)
   validate.py              # routing-layer draft validator (group refs, classifier separation)
   apply.py                 # upsert-merge a draft into local config (dry-run by default, shows field changes for replaced groups, never echoes credentials; --write backs up, verifies on disk, auto-restores on failure)
-  docgate.py               # docs/code drift gate: fails when a public surface changed but the docs did not
+  docgate.py               # shared judgment library of the two gates: public-surface extraction, exemption parsing, CLI contract parsing
   commit-gate.py           # the pre-commit gate contributors and the git hook run (docs sync; --docs-only skips the review archive)
   doctor.py                # read-only diagnosis of existing config (+ schema-legal but cost-/resilience-relevant shape advisories, + wiring smoke-test steps incl. CLI writes)
   e2e.sh                   # isolated acceptance test
@@ -81,6 +91,22 @@ scripts/
 ## Example
 
 [examples/demo/](examples/demo/README.md) walks from local config to a two-layer routing artifact using a fictional provider `acme/*`.
+
+## Acceptance test
+
+The repo ships its own isolated acceptance suite — fake `HOME`, temporary config, no writes to your real magpie setup:
+
+```bash
+bash scripts/e2e.sh
+```
+
+The last line should read `E2E PASS: 143 checks` (the count grows with the suite; trust the actual output), exit code 0.
+
+## Support
+
+Questions, corrections, and "this doesn't match my magpie" reports go to [GitHub issues](https://github.com/evenchan86/magpie-routing-config/issues) — please include your magpie version, your Python version, the exact command, and the output with anything secret-looking already masked (keep the shape, don't paste the real value).
+
+To change the repo itself: [CONTRIBUTING.md](CONTRIBUTING.md) — how to run the suite, how to enable the commit gate, what a PR is expected to contain. What changed for users over time: [CHANGELOG.md](CHANGELOG.md).
 
 ## Honesty note
 
