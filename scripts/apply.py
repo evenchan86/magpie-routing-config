@@ -217,7 +217,7 @@ def pair_masked(gone_raw, came_raw, gone, came):
     """把「按本面掩后同形」的两侧元素配对，返回 `[(gone 下标, came 下标, kind), ...]`。
 
     **成员列表与规则 more 列表共用这一个函数**：同一个说法在两处必须同义，否则 diff 段自己就
-    自相矛盾（实测过：同一批改动放进 members 是三句、放进 more 少一句）。
+    自相矛盾（实测过：同一批改动放进 members 打成三行，放进 more 打成一行、行内分三段说）。
     `gone`/`came` 由调用方按**自己那一面**掩好传进来（echo 面是 shield，整组降级面是 `<text N chars>`）——
     配对的「同形」必须按那一面判，不能在这里替调用方决定。
     候选里优先挑**核心引用相同**的那条：多条元素掩成同一形态时按位置配会配错对子，
@@ -379,7 +379,9 @@ def rule_lines(old, new, echo=True):
                     # --write 一起走不下去，而崩的正是「存量侧不过校验、必须整组降级」这条路径（实测）。
                     counts = change_counts(gone_raw, came_raw) if echo else dict(EMPTY_BUCKETS)
                     # 每个非零桶**各打一句**：用 if/elif 链只报第一个桶，会把「分不清」的那部分
-                    # 整个吞掉——同一批改动放进 members 时三句都在，放进 more 少了��句。
+                    # 整个吞掉——members 与 more 的桶同源于 pair_masked（more 侧走 change_counts
+                    # 计数），只是披露出来的桶可能不同：more 那一侧还要求「掩后形态相同、原值不同」
+                    # 才打这段说明。少打一句就等于少说一件事。
                     parts = []
                     if counts["model"]:
                         parts.append(f"{counts['model']} entry/entries: the reference itself was"
