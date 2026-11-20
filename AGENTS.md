@@ -65,8 +65,8 @@
    - **先 dry-run**：`python3 -I scripts/apply.py <草案.json> ~/.config/magpie/providers.json`——先按 id 合并、再校验**合并结果**（不通过不合并、不写文件），然后展示合并计划：组级（新增/替换/保留）+ **每个被替换组的组内字段级变化**（成员增删 `±模型:强度`、纯换序标 `order changed`、`routing`/`affinity`/`classifier` 等标量旧→新、规则数与**逐条规则的改向/条件/强度变化**（`rules[0].use: 旧 → 新`）、权重逐键旧→新、**被删掉的字段标 `→ (unset)`**；内容相同标 `identical`，纯换序标 `reordered`）。**回显字符串过两道闸**：①只有模型引用/枚举字段才回显，`note`/`name`/未知键等自由文本一律只给 `<text N chars>`；②整组先过密钥/endpoint 形态自查（复用 validate.py 的判定），命中就把该组 diff 全部降级成形态摘要——校验的是合并结果，**被替换组的存量侧不过校验**，任何字段都可能夹带凭据，**不写文件**。校验对象必须是合并后的全量 groups：classifier 跨组分离、组引用存在这类守卫只在合并结果上才成立（只校验草案孤岛会既漏判跨组冲突，又误拒「草案引用已存在组」这种合法写法）。
    - 把 dry-run 的合并计划**连同组内变化一起展示给使用者**（upsert 是整组替换，草稿没写的字段会被删——`→ (unset)` 那几行必须让使用者看见），得到明确确认后才加 `--write` 写入。`--write` 会**先备份**（`providers.json.bak-<时间戳>`，保留原文件权限如同秒重跑加序号不覆盖）、按 group `id` **upsert**（同 id 替换该组对象、新 id 追加末尾、其余原样保留）、**只动 groups 不碰 providers**，并做**写后读回磁盘校验**（providers 段逐键不变 + 落盘 groups 合法）；写入损坏或校验失败会**自动从备份恢复原配置**并非零退出。草案里若带 providers 段会被忽略（只合并 groups），脚本会提示。
    - 若校验报的问题出在**本次不替换的存量组**，那是使用者现有配置的问题：先用 doctor.py 诊断，与使用者确认后再决定怎么处理，不要为了通过校验擅自改动存量组。
-   - 诊断现有配置用 `python3 -I scripts/doctor.py ~/.config/magpie/providers.json`（只读，输出组结构 + 校验结果 + 手动冒烟步骤，不含密钥/endpoint）。配置畸形（providers 非对象列表、groups 非 list）会明确 FAIL，不会谎报「尚未配置」。**退出码语义**：0=诊断完成（**含校验发现问题**）、1=文件/JSON/畸形、2=用法——校验结论看输出的 `validation:` 段，**不要**用 `doctor.py && …` 当闸门（有 finding 时它会打印提醒）。
-   - **写后验收**：magpie 无 CLI 路由接管，需引导使用者在 UI 把 agent 路由指向 `group/auto`（摘要组按 magpie 摘要入口选择），发一条简单测试请求，查 magpie 日志确认路由到预期模型；无法自动验证时给手动步骤（doctor.py 会打印），不要宣称已生效。
+   - 诊断现有配置用 `python3 -I scripts/doctor.py ~/.config/magpie/providers.json`（只读，输出组结构 + 校验结果 + 接线冒烟步骤，不含密钥/endpoint；**冒烟步骤本身含对活实例的 CLI 写操作**，按里面的隔离说明执行）。配置畸形（providers 非对象列表、groups 非 list）会明确 FAIL，不会谎报「尚未配置」。**退出码语义**：0=诊断完成（**含校验发现问题**）、1=文件/JSON/畸形、2=用法——校验结论看输出的 `validation:` 段，**不要**用 `doctor.py && …` 当闸门（有 finding 时它会打印提醒）。
+   - **写后验收（先验接线，再评价组）**：接线语义、陷阱与读数的真源是 [docs/concepts.md](docs/concepts.md) 的「agent 入口」一节——**先读它**，尤其这条：**两参数形式 `magpie <agent> X`，`X` 不是该 agent 的字段名时就是「把主 model 设成 `X`」**（`magpie claude opus` 写 `"model": "opus"` 并让 magpie 退出该 agent；`magpie codex run` 写 `model = "run"`，因为 `run` 只有 claude 有）。操作面：只读用单参数 `magpie ls` / `magpie <agent>`；写接线 `magpie <agent> group/<id>`；改字段 `magpie <agent> <field> <value>`；恢复默认 `magpie <agent> <field> default`（claude 的四档默认＝回主 model，其它字段＝该字段自己的默认）；改接线只影响新会话，claude 可用 `magpie claude run` 起验收会话。验收证据 = `~/.config/magpie/routing/<日期>.jsonl` 里那一轮带 `group.id`（那一轮 `group` 为 `null` 只说明它没走组，**不能据此断定入口是具体模型**，同一节里有反例）。**没看到这条记录就不要宣称已生效**；无法自动验证时给接线冒烟步骤（doctor.py 会打印，里面含 CLI 写操作）。
 
 ## 红线
 
@@ -89,7 +89,7 @@
 - `templates/roles.json`：6 个模型角色（含独立 `intent/judge`）；每角色 `signals`（名字正/负信号 + 需确认的能力 + 排序偏好）与 `mapping_rules`；mapping 为「角色 → 有序模型列表」。
 - `scripts/render.py`：把角色列表映射展开进模板（成员多模型展开 + @effort 覆写 + classifier 取首元素裸引用）。
 - `scripts/apply.py`：草案按 id upsert 合并进本机配置（dry-run 默认；校验合并结果 + 展示组内字段级变化，`--write` 备份+写后读回校验+失败自动恢复，只动 groups）。
-- `scripts/doctor.py`：只读诊断现有配置（组结构 + 校验 + 手动冒烟步骤，输出脱敏）。
+- `scripts/doctor.py`：只读诊断现有配置（组结构 + 校验 + 接线冒烟步骤，输出脱敏；冒烟步骤含对活实例的 CLI 写操作）。
 - `scripts/docgate.py`：文档同步守卫的共享判定（公开面提取、豁免解析、从脚本 usage 解析 CLI 契约），被 e2e 与提交闸共用。
 - `scripts/commit-gate.py`：提交闸——公开面变更必须同批同步公开文档；默认模式还要求当日 review 档案含「文档对照」小节，`--docs-only` 只查前者。
 - `.githooks/pre-commit`：仓库自带的 git 原生提交闸（`git config core.hooksPath .githooks` 启用），不依赖任何外部工具。

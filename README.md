@@ -72,7 +72,7 @@ scripts/
   render.py                # expand role->model-list mapping into the template (multi-model subgroups)
   validate.py              # routing-layer draft validator (group refs, classifier separation)
   apply.py                 # upsert-merge a draft into local config (dry-run by default, shows field changes for replaced groups, never echoes credentials; --write backs up, verifies on disk, auto-restores on failure)
-  doctor.py                # read-only diagnosis of existing config (+ manual smoke-test steps)
+  doctor.py                # read-only diagnosis of existing config (+ wiring smoke-test steps, incl. CLI writes)
   e2e.sh                   # isolated acceptance test
 ```
 

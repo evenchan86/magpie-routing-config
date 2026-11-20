@@ -72,7 +72,7 @@ scripts/
   render.py                # 把角色→模型列表映射展开进模板（多模型子组）
   validate.py              # 路由层草案校验器（组引用、classifier 分离）
   apply.py                 # 草案按 id upsert 合并进本机配置（默认 dry-run，展示被替换组的组内字段级变化、不回显凭据；--write 先备份、写后读回校验、失败自动恢复）
-  doctor.py                # 只读诊断现有配置（+ 手动冒烟步骤）
+  doctor.py                # 只读诊断现有配置（+ 接线冒烟步骤，含 CLI 写操作）
   e2e.sh                   # 隔离验收
 ```
 

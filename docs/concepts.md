@@ -91,6 +91,25 @@ classifier 只做意图判断，**绝不**进 members / 规则 use / more / 兜�
 
 **同一类陷阱在组级也有**（实测）：CLI `weight=<model>=<n>` / `listed=no` 的 JSON 真键名是 **`weights`** / **`unlists`**；glob/`re:` 模式要写进独立的 **`match`** 数组而不是 `members`。写错键名 magpie **静默忽略**，写错类型则**整份配置解析失败**（且 CLI 退出码仍是 0）。详见 [schema.md](schema.md)。
 
+## agent 入口：组配好了不等于生效（重要）
+
+上面两层结构都在**网关侧**。还有一层在**客户端侧**：agent 这一轮交给网关的是「组」还是「一个具体模型」。交具体模型时**组级的一切都不参与**——`classifier`、意图规则、组内 `members` 与故障转移链都不查；路由日志里那一轮的 `group` 与 `rule` 都是 `null`（实测直连记录里 `rule` 无一非空）。交组时才有 `group.id`。
+
+**但旁路的只有组级设置，不是 magpie 的全部动作**（实测，magpie 0.1.4178）：直连记录里 `swapped=true` 占多数（换账号 / 换替身照样发生），`affinity` 记账照旧、`cacheRead` 照样非零（**粘性在直连会话上一样省缓存**），`order` 里也会出现跨供应商候选；不变的是**单次请求内不重试**（`tries` 恒为 1）。别把「直连」理解成「什么都不会发生」，也不要拿「走组才有缓存收益」去算成本。
+
+**所以验收顺序是反的**：先确认入口，再评价组配得好不好。三个读数（都只读）：
+
+- `magpie ls` 列出各 agent 的接线与落点文件；`magpie <agent>` 显示单个 agent——实测只有一行（主 model、`effort`、落点文件），**不会把各档列出来**。
+- 直接读 agent 自己的配置文件（例如 `~/.claude/settings.json` 里的 `ANTHROPIC_DEFAULT_*_MODEL`）。**`~/.config/magpie/applied.json` 是陈旧账本**：里面常留着早已失效的引用（比如指向一个已经不存在的组），不能当现状。
+- `~/.config/magpie/routing/<日期>.jsonl`（历史按天压成 `.jsonl.gz`，只有当天是明文）：时间字段是 **`time`**；走组时组名在 `group.id`。**但单行 `group=null` 不足以断定入口是具体模型**：实测有一批 `kind:"vision"` 的记录，`for.model` 明明是 `group/<id>` 却被记成 `group:null` 且 `for.unknown:true`。判覆盖面看接线，别只看某一轮。
+
+四条实测陷阱：
+
+1. **两参数形式 `magpie <agent> X` 的含义取决于 `X` 是不是该 agent 的字段名**：是 → 显示该字段；不是 → **把主 model 设成 `X`**（magpie 不校验 `X` 是否存在）。两处都是这么踩的：`magpie claude opus` 会写出 `"model": "opus"`（`opus` 又是 agent 自己的别名，设了就等于让 magpie 退出该 agent，**断线**）；`magpie codex run` 会写出 `model = "run"`——只有 `claude` 有 `run` 这个启动器子命令。拿不准就用单参数形式 `magpie <agent>`。
+2. `magpie <agent> <field> default` 把该字段恢复默认。对 claude 的 `opus`/`sonnet`/`haiku`/`fable`，默认＝回到主 model；对其它字段（如 `effort`）＝该字段自己的默认值，跟主 model 无关。
+3. 改接线**只影响新会话**：已运行的进程不重读 env。claude 可以用 `magpie claude run [args…]` 起一个真走接线的会话做验收；其它 agent 没有这个子命令，直接重启那个 agent。
+4. 组级 `affinity` / 意图规则 / 锚定成员只作用在**走组**的那几轮上。评测缓存收益前先按上面三个读数划清覆盖面——直连那部分有自己的粘性收益，只是拿不到意图分发与故障转移。
+
 ## 实测本机配置时的隔离（重要）
 
 本机若正跑着 magpie app，**只换 `HOME` 不能隔离**——CLI 按默认端口探测活实例，会连上真实 gateway。安全探针要加 `MAGPIE_ADDR=127.0.0.1:1`（死端口）并**先断言 `magpie status --json` 的 `running` 为 `false`** 才继续。完整方法见 [schema.md](schema.md) 末节。本仓库 e2e 不调用真实二进制，只用假 HOME 夹具跑自家脚本。

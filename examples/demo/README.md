@@ -57,6 +57,6 @@ python3 -I scripts/apply.py <草案.json> ~/.config/magpie/providers.json --writ
 - **输出脱敏**：自由文本（`note`/`name`/未知键）只给 `<text N chars>`；整组还会先过一遍密钥/endpoint 形态自查，命中就把该组 diff 全部降级为形态摘要。**绝不打印密钥或 endpoint**。
 - **输入闸门**：组元素必须是对象、id 必须是非空字符串、两侧 id 不得重复——重复 id 会让 upsert 静默丢组，故两侧都直接拒绝（**存量侧**的报错会指向 `doctor.py` 让你先修现有配置）。
 - `--write` 会**先备份**（`providers.json.bak-<时间戳>`，保留原权限、同秒重跑加序号）、写入后**读回磁盘校验**（providers 段逐键不变 + 落盘 groups 合法），任何一步失败**自动从备份恢复**并非零退出。
-- 写完还要**路由冒烟**：magpie 无 CLI 路由接管，需在 UI 把 agent 路由指向 `group/auto`，发一条测试请求并查日志确认落到预期模型（`doctor.py` 会打印手动步骤）。
+- 写完还要**接线冒烟**，而且**先验接线再评价组**：用 `magpie ls` / `magpie <agent>`（单参数形式）确认 agent 入口指向 `group/<id>` 而不是某个具体模型——入口是具体模型时组级的一切都不参与。改接线用 `magpie <agent> group/<id>`，只影响新会话；验收证据是 `~/.config/magpie/routing/<日期>.jsonl` 里那一轮带 `group.id`（单行 `null` 不能断定入口是模型）。接线语义与陷阱见仓库 `docs/concepts.md` 的「agent 入口」一节；`doctor.py` 会打印这些步骤（含对活实例的 CLI 写操作）。
 
 本 demo 只跑 dry-run，不执行写入。

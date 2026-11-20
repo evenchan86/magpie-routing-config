@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""只读诊断本机 magpie 路由配置：提取 groups、派生已知模型、跑校验、给手动冒烟步骤。
+"""只读诊断本机 magpie 路由配置：提取 groups、派生已知模型、跑校验、给接线冒烟步骤（步骤本身含对活实例的 CLI 写操作）。
 
 用法: doctor.py <providers.json>
 不写任何文件。输出脱敏：只含组结构/id/模型名/诊断，绝不打印密钥或 endpoint。
@@ -34,10 +34,24 @@ def run_validate(groups_doc, known):
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
-SMOKE = """manual routing smoke test (magpie has no CLI routing takeover):
-  1. in magpie, point your agent's routing at group/auto (summary group via the summary entry).
-  2. send a simple test request; confirm it responds normally.
-  3. check the magpie log to confirm it routed to the expected model/subgroup."""
+SMOKE = """wiring smoke test. Check the wiring BEFORE judging the groups: while an agent's entry is
+a concrete model, nothing at group level runs at all (classifier, intent rules, group members and
+failover chains are skipped; that request logs group and rule as null).
+  0. read the wiring, single-argument form only: `magpie ls`, `magpie <agent>`.
+  1. point the entry at a group: `magpie <agent> group/<id>` (or the UI). Wiring changes only
+     affect NEW sessions; running processes keep the env they started with.
+  2. send one request from a NEW session. `magpie claude run [args...]` starts one for Claude
+     Code; other agents have no run subcommand — restart that agent instead. Never assume the
+     launcher is generic: when the second word is not one of that agent's fields, magpie sets the
+     agent's main model to that word, so `magpie codex run` really writes model = "run" and
+     `magpie claude opus` really writes "model": "opus".
+  3. prove the group was consulted: in ~/.config/magpie/routing/<date>.jsonl that request must
+     carry group.id (the time field is `time`). One row with a null group does NOT prove the entry
+     is a model — see docs/concepts.md. `applied.json` is a stale ledger, not current state.
+  isolation: reading/writing wiring targets the LIVE instance. Only schema probes are isolated,
+  and that needs all three legs — a fake HOME, MAGPIE_ADDR=127.0.0.1:1, and asserting
+  `magpie status --json` reports running=false. The dead port alone still reads the real
+  ~/.config/magpie, so it can hand you a false sense of isolation."""
 
 
 def main():

@@ -1288,6 +1288,13 @@ BANNED = [(rf"(?:所有|每个|各)组[^。\n]*(?:members[^。\n]*{NONEMPTY}|{NO
           (r"11 (?:模式|种)", "routing has 12 modes", True, r"routing|池路由"),
           (r"\b11 modes\b", "routing has 12 modes", True, r"routing"),
           (r"必须[^。\n]*compact:\s*true", "compact 是压缩触发条件不是兜底", True, None),
+          # 「magpie 没有 agent 接线的 CLI」曾被写进收尾验收步骤与 demo 文档，实测推翻：
+          # magpie ls（列接线与落点文件）、magpie <agent> <model>（写主 model）、
+          # magpie <agent> <field> default（该档回继承）都可用
+          (r"无 CLI 路由接管|no CLI routing takeover", "magpie has an agent-wiring CLI", True, None),
+          # 把启动器当成通用子命令写进给使用者的步骤 = 会写坏配置（实测 `magpie codex run`
+          # 写出 model = "run"，因为只有 claude 有 run）。射程同样是精确形态，换句式不判。
+          (r"magpie <agent> run", "run 只有 claude 有；其它 agent 的两参数形态会写主 model", True, None),
           (r"值形态待核", "value shapes already probed", False, "PENDING"),
           (r"语义仍待核", "semantics already settled", False, "PENDING")]
 for rel in DOCS:
@@ -1546,5 +1553,28 @@ with tempfile.TemporaryDirectory() as td:
     assert r.returncode == 0, f"[65] staged 二进制文件让提交闸崩了: {r.stdout + r.stderr}"
 PY
 ok "repo-owned git hook enforces the gate regardless of commit command spelling"
+
+# 66. doctor 的接线冒烟步骤：必须【先验接线再评价组】、必须警告两参数会写主 model、
+#     必须给全隔离三件套；且不得复活旧失真或给出会写坏配置的命令形态。
+#     断言写成显式 FAIL 文案：裸 grep 在 set -euo pipefail 下会静默退 1，红都不知道红在哪。
+python3 -I - > "$TMP/smoke-providers.json" <<'PY'
+import json
+print(json.dumps({"providers": [{"id": "acme", "models": ["acme/x"]}],
+                  "groups": [{"id": "auto", "name": "gateway", "routing": "order",
+                              "members": ["acme/x:high"]}]}))
+PY
+python3 -I scripts/doctor.py "$TMP/smoke-providers.json" > "$TMP/smoke.txt" 2>&1 || true
+smoke_need() { grep -q -- "$2" "$TMP/smoke.txt" || { echo "FAIL: [66] 冒烟步骤缺少「$1」"; exit 1; }; }
+smoke_deny() { if grep -q -- "$2" "$TMP/smoke.txt"; then echo "FAIL: [66] 冒烟步骤含失真/危险表述「$1」"; exit 1; fi; }
+smoke_need "组级一切都不参与"        "nothing at group level runs at all"
+smoke_need "先读接线的命令形态"      'magpie <agent> group/'
+smoke_need "只有 claude 有启动器"    'magpie claude run'
+smoke_need "两参数会写主 model"      'main model to that word'
+smoke_need "验收证据是 group\\.id"   'group\.id'
+smoke_need "applied.json 是陈旧账本" 'stale ledger'
+smoke_need "隔离三件套含假 HOME"    'fake HOME'
+smoke_deny "旧的「无 CLI 接管」说法" 'no CLI routing takeover'
+smoke_deny "通用 run（会写坏配置）"  'magpie <agent> run'
+ok "doctor smoke steps verify agent wiring before judging groups"
 
 echo "E2E PASS: ${CHECKS} checks"
