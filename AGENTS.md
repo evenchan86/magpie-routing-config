@@ -80,12 +80,13 @@
 - **实测本机 magpie 二进制时必须真隔离**：只设 `HOME` 不够（CLI 按端口连活实例，会改到真实配置）。加 `MAGPIE_ADDR=127.0.0.1:1` 并先断言 `magpie status --json` 的 `running` 为 `false`；方法见 `docs/schema.md` 末节。
 - 默认兜底按**组的 routing 模式**（未命中规则→照组本来方式路由：`order` 首成员优先、`usage` 按额度分摊），不是 `compact:true`；`compact:true` 只是压缩触发条件。
 - `affinity`、规则/成员指向组（`group/<id>`）均已实测支持；其余未验证项见 `docs/schema.md` 待验证清单——不要当作已支持特性写进配置。
+- **主链锚定是模板的默认形状**（取舍见 `docs/patterns.md` 模式 13）：会话会跨意图互切的那几组，`members[0]` 写同一个模型、组内一律同档、并设 `affinity: session`。改成员强度等于换缓存键；要逐组换模型家族就用字面量成员，别打散锚。改 `templates/groups.template.json` 必须**同批**重生成 `examples/demo/output.groups.json`——`scripts/docgate.py` 对 `templates/*.json` 只看顶层键集合，不会替你发现组内漂移；模板形状由 `scripts/e2e.sh` 的断言守着。
 
 ## 文档索引
 
 - `docs/concepts.md`：两层路由、池路由 vs 故障转移、compact vs 默认兜底、classifier 独立、affinity 粘性、配置与日志区分。
 - `docs/schema.md`：字段参考（逐字段标来源与校验状态）、routing 12 模式（含 manual）/ affinity 5 值语义、member 写法、组嵌套、待验证清单。
-- `docs/patterns.md`：两层意图分发主模式 + 子组池模式 + 每模型强度 + 多通道额度分摊。
+- `docs/patterns.md`：13 条模式——主模式（两层意图分发）+ 子组模式（池、每模型强度、多通道分摊、classifier 独立）+ 通用模式 6–13（含会话粘性、主链锚定）+ 复现配方 + 真实案例与「落盘与观测的坑」。
 - `templates/roles.json`：6 个模型角色（含独立 `intent/judge`）；每角色 `signals`（名字正/负信号 + 需确认的能力 + 排序偏好）与 `mapping_rules`；mapping 为「角色 → 有序模型列表」。
 - `scripts/render.py`：把角色列表映射展开进模板（成员多模型展开 + @effort 覆写 + classifier 取首元素裸引用）。
 - `scripts/apply.py`：草案按 id upsert 合并进本机配置（dry-run 默认；校验合并结果 + 展示组内字段级变化，`--write` 备份+写后读回校验+失败自动恢复，只动 groups）。

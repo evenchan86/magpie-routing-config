@@ -3,7 +3,7 @@
     {
       "id": "auto",
       "name": "主路由（意图分发）",
-      "note": "只做意图判断再分发到子组；默认走成员顺序第一位 g-code",
+      "note": "只做意图判断再分发到子组；默认走成员顺序第一位 g-code。刻意不设 affinity：组级粘性对「成员本身是子组」的作用范围未实测，粘性交给各子组自己设",
       "classifier": "acme/judge",
       "routing": "order",
       "members": [
@@ -58,7 +58,7 @@
     {
       "id": "g-compact",
       "name": "长上下文摘要",
-      "note": "摘要只要长上下文、快、便宜",
+      "note": "摘要只要长上下文、快、便宜。刻意不设 affinity：压缩后前缀本来就要重建，钉住成员省不到缓存",
       "routing": "order",
       "members": [
         "acme/long-reader:low",
@@ -68,7 +68,9 @@
     {
       "id": "g-test",
       "name": "测试",
+      "note": "usage 摊额度 + session 钉住会话内通道；唯一成员就是主链锚，切到测试意图也不换模型",
       "routing": "usage",
+      "affinity": "session",
       "members": [
         "acme/code-standard:high",
         "acme/code-backup:high"
@@ -77,26 +79,32 @@
     {
       "id": "g-light",
       "name": "轻量问答",
+      "note": "两个成员同为 :low、可互换。session 只保证会话内不换通道；新会话的分配按 schema.md 的 session 语义（当前最少并发），与 usage 分摊叠加时的行为未实测（见 schema.md 待验证清单）",
       "routing": "usage",
+      "affinity": "session",
       "members": [
-        "acme/lite-chat:low"
+        "acme/lite-chat:low",
+        "acme/long-reader:low"
       ]
     },
     {
       "id": "g-code",
       "name": "日常编码（默认）",
+      "note": "主链锚定：首位成员与其余主链组同一个角色、同为 :high，跨意图切换不重建 prompt cache；备用也同档",
       "routing": "order",
+      "affinity": "session",
       "members": [
         "acme/code-standard:high",
         "acme/code-backup:high",
-        "acme/lite-chat:medium"
+        "acme/lite-chat:high"
       ]
     },
     {
       "id": "g-heavy",
       "name": "重构/大改动",
-      "note": "通用强模型在前保护旗舰额度；额度充裕可对调",
+      "note": "锚在前保护旗舰额度；额度充裕可对调（对调=换缓存键，见 docs/patterns.md）",
       "routing": "order",
+      "affinity": "session",
       "members": [
         "acme/code-standard:high",
         "acme/code-backup:high",
@@ -107,17 +115,21 @@
     {
       "id": "g-arch",
       "name": "架构/疑难",
+      "note": "首位仍是锚，重推理模型作次选；全组同档，不用 max/xhigh——同组混档等于顶班时整段前缀重付",
       "routing": "order",
+      "affinity": "session",
       "members": [
-        "acme/strong-reasoner:max",
-        "acme/reasoner-backup:max",
-        "acme/code-standard:xhigh",
-        "acme/code-backup:xhigh"
+        "acme/code-standard:high",
+        "acme/code-backup:high",
+        "acme/strong-reasoner:high",
+        "acme/reasoner-backup:high",
+        "acme/long-reader:high"
       ]
     },
     {
       "id": "g-ui",
       "name": "前端设计",
+      "note": "唯一不锚的主链组：读图能力不能从模型名臆断（见 AGENTS.md），故视觉模型仍居首。确认主力模型能读图后，把锚提到首位即可与其余主链组一致。demo 用 mapping 的 @high 覆写本组演示混强度的代价",
       "routing": "order",
       "members": [
         "acme/vision-designer:high",
@@ -128,12 +140,13 @@
     {
       "id": "g-review",
       "name": "代码审查",
-      "note": "刻意选与写代码不同的模型家族，视角不同",
+      "note": "审查组首位同样钉锚（会话会从审查切回编码）。要「审查与被审不同家族」的视角多样性，就别用角色槽，把该家族按字面量写进本组（配方见 docs/patterns.md）",
       "routing": "order",
+      "affinity": "session",
       "members": [
-        "acme/code-standard:medium",
-        "acme/code-backup:medium",
-        "acme/lite-chat:high"
+        "acme/code-standard:high",
+        "acme/code-backup:high",
+        "acme/long-reader:high"
       ]
     }
   ]

@@ -406,11 +406,55 @@ for tg in tpl["groups"]:
     cls = tg.get("classifier")
     if isinstance(cls, str) and role_re.fullmatch(cls):
         assert rg["classifier"] == mapping[role_re.fullmatch(cls).group(1)][0], f"{tg['id']}: classifier != first list element"
-# 具体同构断言：g-code 三模型有序链（code/general 2 个 + fast/cheap 1 个）
-assert rendered["g-code"]["members"] == ["acme/code-standard:high", "acme/code-backup:high", "acme/lite-chat:medium"], rendered["g-code"]["members"]
+# 具体同构断言：g-code 三模型有序链（code/general 2 个 + fast/cheap 1 个），备用与主力同档
+assert rendered["g-code"]["members"] == ["acme/code-standard:high", "acme/code-backup:high", "acme/lite-chat:high"], rendered["g-code"]["members"]
 assert rendered["auto"]["classifier"] == "acme/judge"
+# 模板形状守卫（防退化）。docgate 对 templates/*.json 只取顶层键集合，组内改动没有任何机器闸兜底
+# ——上一轮「策略已改、模板没跟上」就是这么漂过去的。所以策略本身进断言，不只留在文档里。
+tg = {g["id"]: g for g in tpl["groups"]}
+# 档位词取 validate 的常量，别在这里再抄一份（抄了就会漂）
+import importlib.util
+_vspec = importlib.util.spec_from_file_location("v", str(root / "scripts/validate.py"))
+v = importlib.util.module_from_spec(_vspec); _vspec.loader.exec_module(v)
+def tier(m):
+    """成员尾部档位；先剥 `#account`（`provider/model:high#acc` 是合法写法），模型名/账号里的 `@` 不参与。
+    返回 None = 解析不出单一档位：裸引用（省略 :effort，schema 允许）或多级 `:low+high`。"""
+    base = m.split("#", 1)[0]
+    suf = base.rsplit(":", 1)[1] if ":" in base else ""
+    return suf if suf in v.MEMBER_EFFORT else None
+ANCHOR = "<role:code/general>:high"
+MAIN_CHAIN = ["g-code", "g-heavy", "g-arch", "g-review"]   # 会话会跨这些意图互切，见 docs/patterns.md 模式 13
+# g-test 是 usage（首位没有「默认成员」语义，见坑 3），但它唯一的成员就是锚：切到测试意图也不换模型
+ANCHORED = MAIN_CHAIN + ["g-test"]
+NO_AFFINITY = {"auto", "g-compact", "g-ui"}                # 刻意为之，理由各写在该组 note 里
+MIXED_TIER_OK = set()   # 刻意混档的独立池登记在此并在该组 note 写清代价（模式 3）；空集=模板现在不混档
+for gid in ANCHORED:
+    assert gid in tg, f"模板缺锚定组 {gid}（ANCHORED 与模板对不上）"
+    ms = tg[gid]["members"]
+    assert ms[0] == ANCHOR, f"{gid}: 首位不是锚 {ANCHOR}，跨意图切换会整段重建 prompt cache"
+    ts = [tier(m) for m in ms]
+    assert None not in ts, f"{gid}: 同档靠成员各标 :effort 保证，裸引用或多级 :low+high 都算未标，实际 {ms}"
+    assert set(ts) == {tier(ANCHOR)}, f"{gid}: 同组不同档 {ts}"
+    assert tg[gid].get("affinity") == "session", f"{gid}: 缺 affinity=session"
+leaf = [g for g in tpl["groups"] if g.get("members") and not any(str(m).startswith("group/") for m in g["members"])]
+assert {g["id"] for g in leaf} - NO_AFFINITY == set(tg) - NO_AFFINITY - {"auto"}, "叶子组集合与锚定/便宜层对不上"
+for g in leaf:
+    gid = g["id"]
+    # `affinity: auto` 就是不设（schema 默认值），两种写法等价，都算「刻意不设」
+    ok_aff = (None, "auto") if gid in NO_AFFINITY else ("session",)
+    assert g.get("affinity") in ok_aff, f"{gid}: affinity 应为 {'/'.join(map(str, ok_aff))}（取舍见该组 note 与模式 13）"
+    if gid not in MIXED_TIER_OK:
+        ts = [tier(m) for m in g["members"]]
+        assert all(t == ts[0] for t in ts), f"{gid}: 同组不同档 {ts}（要刻意混档就登记进 MIXED_TIER_OK 并在 note 写代价）"
+# 产物侧同样要闸：mapping 里的 `@effort` 覆写能把渲染后的主链重新拉成混档，只查模板 token 拦不住
+RANCHOR = "acme/code-standard:high"
+for gid in ANCHORED:
+    ms = rendered[gid]["members"]
+    assert ms[0] == RANCHOR, f"产物 {gid}: 首位不是锚 {RANCHOR}，实际 {ms}"
+    ts = [tier(m) for m in ms]
+    assert None not in ts and set(ts) == {"high"}, f"产物 {gid}: 主链成员档位不齐 {ts}（mapping 里的 @effort 覆写会打到主链上）"
 PY
-ok "multi-model expansion invariant (count = sum of list lengths; classifier = first)"
+ok "multi-model expansion invariant + template shape guarded (anchor, tiers, affinity)"
 
 # 35. 反向：render.py 缺映射角色必须 FAIL
 python3 -I - "$TMP" <<'PY'

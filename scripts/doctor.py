@@ -87,9 +87,14 @@ def main():
     for g in groups:
         cls = g.get("classifier", "-")
         # members/rules 可能是 null（magpie 自建的空组、pattern-only 组就是这样），不能 len(None)
+        mem = g.get("members") or []
         pat = len(g.get("match") or [])
         extra = f" match={pat}" if pat else ""
-        print(f"  {g.get('id', '?'):<14} routing={g.get('routing', 'smart'):<8} members={len(g.get('members') or [])}{extra} classifier={cls}")
+        # 粘性取值与首位成员都要打出来：magpie 会重排 members（见 docs/patterns.md 坑 3），
+        # 「落盘后回读首位与 affinity」这一步没有这两个读数就无从执行。首位只对 order 类有意义。
+        first = f" first={mem[0]}" if mem and g.get("routing", "smart") == "order" else ""
+        print(f"  {g.get('id', '?'):<14} routing={g.get('routing', 'smart'):<8} members={len(mem)}{extra}"
+              f" affinity={g.get('affinity', '(unset)')} classifier={cls}{first}")
     rc, out = run_validate({"groups": groups}, known)
     print("validation:")
     print(out)

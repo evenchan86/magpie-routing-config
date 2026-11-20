@@ -32,10 +32,10 @@ Your providers and keys **stay untouched**; this repo only touches the routing l
 
 Routing is split into two layers so intent judgment and model selection stay separate:
 
-![Two-layer intent dispatch: a classifier in the auto router judges each turn and dispatches to one of eight task subgroups, each with its own models and routing mode](assets/readme/dispatch.svg)
+![Two-layer intent dispatch: a classifier in the auto router judges each turn and dispatches to one of eight task subgroups, each with its own member list and routing mode](assets/readme/dispatch.svg)
 
 - **Main router (`auto`)** — a small fast **classifier** judges the intent of each turn, then dispatches to a task subgroup via `use=group/<id>`. It does no model selection itself. When no intent matches, it falls back **by the group's routing mode**; the template uses `order`, so that means its first member (the everyday-coding subgroup).
-- **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning **multiple model members** and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix. A role maps to an ordered model list, so each subgroup can hold several models (e.g. a primary coder → a backup coder → a cheap fallback).
+- **Task subgroups** — eight groups (`g-compact` / `g-test` / `g-light` / `g-code` / `g-heavy` / `g-arch` / `g-ui` / `g-review`), each owning **multiple model members** and a routing mode (`order` for ordered failover, `usage` for quota spreading). Per-model reasoning effort is set with the `:effort` member suffix. A role maps to an ordered model list, so each subgroup can hold several models (e.g. a primary coder → a backup coder → a cheap fallback at the same effort; the main-chain groups share one anchor model — see `docs/patterns.md` pattern 13).
 
 The classifier is a **separate role**: it only judges intent and is **never** a routing member, rule target, or fallback.
 

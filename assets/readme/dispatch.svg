@@ -108,8 +108,8 @@
     <text x="180" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/code:high</text>
     <line x1="280" y1="549" x2="322" y2="549" stroke="#8A94A0" stroke-width="1.5" marker-end="url(#ahm)"/>
     <rect x="326" y="528" width="230" height="42" rx="10" fill="#151A20" stroke="#2A323C" stroke-width="1.5"/>
-    <text x="441" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/cheap:medium</text>
-    <text x="80" y="602" font-size="18" fill="#8A94A0">primary first, then fall back</text>
+    <text x="441" y="555" font-size="18" fill="#F4F6F8" text-anchor="middle">acme/cheap:high</text>
+    <text x="80" y="602" font-size="18" fill="#8A94A0">primary first, same tier, then fall back</text>
 
     <rect x="624" y="452" width="520" height="176" rx="14" fill="#0F1418" stroke="#2A323C" stroke-width="1.5"/>
     <text x="648" y="486" font-size="18" fill="#E8B44C">usage · quota spreading</text>
