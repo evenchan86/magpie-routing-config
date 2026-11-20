@@ -68,7 +68,7 @@
     {
       "id": "g-test",
       "name": "测试",
-      "note": "usage 摊额度 + session 钉住会话内通道；唯一成员就是主链锚，切到测试意图也不换模型",
+      "note": "usage 摊额度 + session 钉住会话内通道；唯一成员的【角色】是主链锚，渲染后该角色展开为 mapping 里的所有模型（demo 里 = 主力 + 备用模型），故首位与主链同模型，会话内不在这几者间跳",
       "routing": "usage",
       "affinity": "session",
       "members": [

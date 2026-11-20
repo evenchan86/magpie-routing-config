@@ -424,7 +424,7 @@ def tier(m):
     return suf if suf in v.MEMBER_EFFORT else None
 ANCHOR = "<role:code/general>:high"
 MAIN_CHAIN = ["g-code", "g-heavy", "g-arch", "g-review"]   # 会话会跨这些意图互切，见 docs/patterns.md 模式 13
-# g-test 是 usage（首位没有「默认成员」语义，见坑 3），但它唯一的成员就是锚：切到测试意图也不换模型
+# g-test 是 usage（首位没有「默认成员」语义，见坑 3），但渲染后它的首位成员就是主链锚：切到测试意图时首位不换模型
 ANCHORED = MAIN_CHAIN + ["g-test"]
 NO_AFFINITY = {"auto", "g-compact", "g-ui"}                # 刻意为之，理由各写在该组 note 里
 MIXED_TIER_OK = set()   # 刻意混档的独立池登记在此并在该组 note 写清代价（模式 3）；空集=模板现在不混档
@@ -742,7 +742,57 @@ python3 -I scripts/doctor.py "$TMP/apply-target.json" > "$TMP/doc-full.txt"
 python3 -I scripts/apply.py examples/demo/output.groups.json "$TMP/apply-target.json" > "$TMP/apply-plan.txt" 2>&1
 if grep -q "acme-demo-key-fictional" "$TMP/doc-full.txt" "$TMP/apply-plan.txt"; then echo "FAIL: key leaked into output"; exit 1; fi
 if grep -q "api.acme.invalid" "$TMP/doc-full.txt" "$TMP/apply-plan.txt"; then echo "FAIL: endpoint leaked into output"; exit 1; fi
-ok "apply/doctor output contains no secrets or endpoints"
+# 必须被抓的正例：凭据形态放进【组字段】而不是 providers——doctor 的组行/形状诊断与 validate 的
+# 报错都会回显成员串与组 id，只把密钥放 providers 的那些断言对这条路径恒绿（review 实测）。
+python3 -I - "$TMP" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+KEY = "FAKE-" + "g9Zk" * 6                  # 明显虚构字面量（validate 的 SECRET_VALUE 认这个前缀）
+HOST = "leak.example.com"                   # 三段点分域名：endpoint 形态
+base = json.loads(Path("examples/demo/input.providers.json").read_text())
+base["groups"] = [
+    {"id": "g-key", "routing": "order",
+     "members": [f"acme/code-standard:high#{KEY}", "acme/code-backup:high"], "note": f"see {HOST}"},
+    {"id": f"g-{KEY}", "routing": "order",
+     "members": ["acme/" + HOST + ":high", "acme/long-reader:high"]},
+]
+p = tmp / "leak-members.json"; p.write_text(json.dumps(base, ensure_ascii=False))
+# 草案只替换 g-key：apply 的 diff 会回显【存量组】的成员串（存量侧不过校验），正是最危险的那条路径
+draft = tmp / "leak-draft.json"
+draft.write_text(json.dumps({"groups": [{"id": "g-key", "routing": "order",
+                                         "members": ["acme/code-standard:high"]}]}, ensure_ascii=False))
+# 重复 id 的报错走 apply 自己的 check_ids（不经 validate），也要过 shield：同侧两份同 id 才触发
+dup = tmp / "leak-dup.json"
+dup.write_text(json.dumps({"groups": [
+    {"id": f"g-{KEY}", "routing": "order", "members": ["acme/code-backup:high"]},
+    {"id": f"g-{KEY}", "routing": "order", "members": ["acme/long-reader:high"]}]}, ensure_ascii=False))
+# 可校验通过的夹具：草案替换掉带 `#KEY` 的存量组 → apply 走到 diff 段。上面那份停在写前校验，
+# 根本没走到 diff，diff 段的脱敏在那份上恒绿（review 实测过这类假绿）。
+okb = json.loads(json.dumps(base))
+okb["groups"] = [{"id": "g-key", "routing": "order",
+                  "members": [f"acme/code-standard:high#{KEY}", "acme/code-backup:high"]}]
+pb = tmp / "leak-members-ok.json"; pb.write_text(json.dumps(okb, ensure_ascii=False))
+# 每个输出面钉它【该打出】的遮蔽形态（全部实测确认，不是推测）：
+#   doctor          → 三个面都走 shield：`#<account N chars>`、`<ref N chars>`、`provider/<model N chars>:档位`
+#   apply 写前校验  → shield（model 段含点分域名 → `<model N chars>`）
+#   apply diff 段   → 整组降级 `<text N chars>`（secretish 命中就把组内所有串降级，比 shield 粗但同源）
+#   apply 重复 id   → shield（`<ref N chars>`）
+faces = (("doctor", [sys.executable, "-I", "scripts/doctor.py", str(p)], ("<account", "<ref ", "<model ")),
+         ("apply-invalid", [sys.executable, "-I", "scripts/apply.py", str(draft), str(p)], ("<model ",)),
+         ("apply-diff", [sys.executable, "-I", "scripts/apply.py", str(draft), str(pb)], ("<text ",)),
+         ("apply-dup", [sys.executable, "-I", "scripts/apply.py", str(dup), str(p)], ("<ref ",)))
+for label, cmd, marks in faces:
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    for shape, token in (("key", KEY), ("endpoint host", HOST)):
+        hits = [l for l in out.splitlines() if token in l]
+        assert not hits, f"{label} 回显了 {shape} 形态：{len(hits)} 行\n" + "\n".join(hits)[:400]
+    for m in marks:
+        assert m in out, f"{label} 缺遮蔽痕迹 {m!r}（那条路径没挡，或夹具没落到那条路径上）：\n{out[:400]}"
+assert KEY in p.read_text(), "夹具本身没落盘密钥形态 → 上面全是假绿"
+PY
+ok "apply/doctor output contains no secrets or endpoints (incl. credential-shaped group fields)"
 
 # 52. 合并结果非法（跨组 classifier 冲突：存量组成员 == 草案 classifier）必须【写前】拒绝
 #     只校验草案孤岛会漏判此例（红线：classifier 绝不进任何路由成员）
@@ -844,14 +894,16 @@ python3 -I - "$TMP" <<'PY'
 import json, shutil, subprocess, sys
 from pathlib import Path
 tmp = Path(sys.argv[1])
-WRITE = '    target_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\\n")'
+# 缩进是承重的：那行现在包在 `try:` 里（写盘失败要干净退出），变异体必须同缩进，
+# 否则注入会把副本改成语法错——红在无关处，等于没测（下面那句 assert 就是防这个的）
+WRITE = '        target_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\\n")'
 MUT = {
-  "corrupt-json": '    target_path.write_text("{ this is not json")',
-  "providers-tampered": '    bad = dict(result); bad["providers"] = [{"id": "evil"}]\n'
-                        '    target_path.write_text(json.dumps(bad, ensure_ascii=False, indent=2) + "\\n")',
-  "groups-corrupted": '    bad = json.loads(json.dumps(result))\n'
-                      '    bad["groups"][0]["members"] = ["acme/ghost-model"]\n'
-                      '    target_path.write_text(json.dumps(bad, ensure_ascii=False, indent=2) + "\\n")',
+  "corrupt-json": '        target_path.write_text("{ this is not json")',
+  "providers-tampered": '        bad = dict(result); bad["providers"] = [{"id": "evil"}]\n'
+                        '        target_path.write_text(json.dumps(bad, ensure_ascii=False, indent=2) + "\\n")',
+  "groups-corrupted": '        bad = json.loads(json.dumps(result))\n'
+                      '        bad["groups"][0]["members"] = ["acme/ghost-model"]\n'
+                      '        target_path.write_text(json.dumps(bad, ensure_ascii=False, indent=2) + "\\n")',
 }
 src = Path("scripts/apply.py").read_text()
 assert WRITE in src, "write-line anchor missing; mutation would not take effect"
@@ -1620,5 +1672,262 @@ smoke_need "隔离三件套含假 HOME"    'fake HOME'
 smoke_deny "旧的「无 CLI 接管」说法" 'no CLI routing takeover'
 smoke_deny "通用 run（会写坏配置）"  'magpie <agent> run'
 ok "doctor smoke steps verify agent wiring before judging groups"
+
+# 67. doctor 的形状诊断：每条判据都要有**必须报**的正例，也要有**必须不报**的反例（防空洞、防误伤）。
+#     工具输出是英文（与 validate/apply 一致，README 入口是英文），needle 按英文原句取。
+#     必须不报的五类：干净夹具；配了 match 的单成员组（还有模式成员兜着）；members 畸形
+#     （null/字符串/数字/对象——不得崩，也不得把字符串长度当成员数）；**各自有锚、只在第二位共用
+#     一个便宜备胎**的两组（两路 review 独立复现出的假报警面）；只有一组 order 类组的配置。
+#     demo 那条反向断言同时是**粒度守卫**：把「完全相同的成员串」放宽成「同基名」，demo 立刻多出
+#     7 对噪声（实测），它会红。
+python3 -I - "$TMP" <<'PY'
+import json, shutil, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+demo_prov = json.loads(Path("examples/demo/input.providers.json").read_text())
+demo_prov["groups"] = json.loads(Path("examples/demo/output.groups.json").read_text())["groups"]
+DRIFT = "share a member but do not start with it the same way"
+SINGLE = "group has a single member and no match"
+TIER_DIFF = "start with the same model at different effort"
+clean = [{"id": "a", "routing": "order", "members": ["acme/code-standard:high", "acme/code-backup:high"]},
+         {"id": "b", "routing": "order", "members": ["acme/code-standard:high", "acme/strong-reasoner:high"]},
+         {"id": "c", "routing": "usage", "members": ["acme/lite-chat:low", "acme/long-reader:low"]}]
+bad = [{"id": "a", "routing": "order", "members": ["acme/code-standard:high"]},
+       {"id": "b", "routing": "order", "members": ["acme/strong-reasoner:high", "acme/code-standard:high"]},
+       {"id": "c", "routing": "usage", "members": ["acme/lite-chat:low", "acme/code-standard:high"]},
+       {"id": "e", "routing": "drain", "members": ["acme/long-reader:low"]},
+       {"id": "f", "routing": "order", "members": ["acme/code-standard:medium", "acme/code-backup:medium"]}]
+must_not = [{"id": "m", "routing": "order", "members": ["acme/lite-chat:low"], "match": ["acme/*"]},
+            {"id": "n", "routing": "drain", "members": "oops", "match": ["acme/lite-chat:low"]},
+            {"id": "k", "routing": "order", "members": None, "match": ["acme/long-reader:low"]},
+            {"id": "k2", "routing": "order", "members": 7, "match": ["acme/long-reader:low"]},
+            {"id": "k3", "routing": "order", "members": {"a": True}, "match": ["acme/long-reader:low"]}]
+own_anchors = [{"id": "x", "routing": "order", "members": ["acme/code-standard:high", "acme/lite-chat:low"]},
+               {"id": "y", "routing": "order", "members": ["acme/strong-reasoner:high", "acme/lite-chat:low"]}]
+drain_only = [{"id": "dz", "routing": "drain", "members": ["acme/code-standard:high", "acme/code-backup:high"]}]
+single = [{"id": "only", "routing": "order", "members": ["acme/code-standard:high", "acme/code-backup:high"]}]
+# 档位判据对多级 `:low+high` 与 `:fast` 必须沉默（AGENTS 这样写，没有夹具就是空话）
+tier_silent = [{"id": "ts1", "routing": "order", "members": ["acme/code-standard:low+high", "acme/code-backup:high"]},
+               {"id": "ts2", "routing": "order", "members": ["acme/code-standard:fast", "acme/code-backup:high"]}]
+# 主路由（成员是 group/*）不参与叶子组判据
+main_router = [{"id": "auto", "routing": "order", "members": ["group/g-x"]},
+               {"id": "g-x", "routing": "order", "members": ["acme/code-standard:high", "acme/code-backup:high"]}]
+# 漂移配对封顶：9 组两两配对 = 36 对，必须截断并报出未列出的对数
+# 首尾互换才能触发漂移（判据要 fa != fb 且共享成员至少在一组居首）：5 偶 × 4 奇 = 20 对 > 上限 6
+many = [{"id": f"c{i}", "routing": "order",
+         "members": (["acme/strong-reasoner:high", "acme/code-standard:high"] if i % 2 == 0
+                     else ["acme/code-standard:high", "acme/strong-reasoner:high"])} for i in range(9)]
+# match 写成字符串：不能算「有模式成员」，也不能打成长度数字
+match_str = [{"id": "ms", "routing": "order", "members": ["acme/lite-chat:low"], "match": "acme/*"}]
+# 重复 id：判据会「同一个 id 自相矛盾」，必须先声明
+dup_ids = [{"id": "same", "routing": "order", "members": ["acme/code-standard:high"]},
+           {"id": "same", "routing": "order", "members": ["acme/code-standard:medium"]}]
+# 校验器遇到畸形枚举值不得崩（崩了 doctor 会打 traceback 再报 none = 假体检合格）
+bad_enum = [{"id": "be", "routing": ["order"], "members": ["acme/code-standard:high"]}]
+# 三段点分的模型名与 endpoint host 形态同形，必须 fail closed，但骨架（provider + 档位）要留下
+dotted = [{"id": "dt", "routing": "order", "members": ["acme/glm-5.1.flash:high", "acme/code-backup:high"]}]
+def run(groups, name, script="scripts/doctor.py"):
+    doc = json.loads(json.dumps(demo_prov)); doc["groups"] = groups
+    p = tmp / f"t67{name}.json"; p.write_text(json.dumps(doc, ensure_ascii=False))
+    r = subprocess.run([sys.executable, "-I", script, str(p)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr   # 契约：发现问题也退 0
+    return r.stdout + r.stderr
+def section(out):
+    # 只在 `shape findings:` 段内判定——扫全份 stdout 会被冒烟文案里的词污染（将来某句含 none 就恒绿）
+    lines = out.splitlines()
+    i = next(k for k, l in enumerate(lines) if l.strip() == "shape findings:")
+    body = []
+    for l in lines[i + 1:]:
+        if not l.strip():
+            break
+        body.append(l)
+    return "\n".join(body)
+def head(out):
+    return out.split("validation:")[0]
+b, c, d = run(bad, "bad"), run(clean, "clean"), run(demo_prov["groups"], "demo")
+for needle in ("order " + SINGLE, "drain " + SINGLE,   # 单成员（模式 9），order 类含 drain
+               DRIFT,                                  # 跨组首位（模式 13 / 坑 3）
+               TIER_DIFF,                              # 同锚不同档：档位进缓存键，漏它最贵
+               "members at different effort", "assumes interchangeable members"):
+    assert needle in section(b), f"坏夹具漏报「{needle}」:\n{section(b)}"
+assert "  none" in section(c), f"干净夹具不该有 finding:\n{section(c)}"
+assert "validate does not enforce these" in section(c), f"限定语漂移（该段的英文限定句）:\n{section(c)}"
+# 组行读数也要钉住：文档承诺每组打 `affinity=`、order 类组打 `first=`。不钉就会静默漂成只认 order。
+assert "affinity=session" in head(d) and "first=acme/code-standard:high" in head(d), head(d)
+dz = run(drain_only, "drain")
+assert "first=acme/code-standard:high" in head(dz) and "routing=drain" in head(dz), head(dz)
+# demo 反向断言＝粒度守卫：混档要报，不锚组不得被首位判据误伤
+assert "members at different effort" in section(d) and DRIFT not in section(d), \
+    f"demo 夹具失真（混档要报、不锚组不得被首位判据误伤）:\n{section(d)}"
+# 反例：配了 match 就不说「没有故障转移」；members 畸形按空处理（组行显式 members=0，不是数字符串）
+mu = run(must_not, "mustnot")
+assert SINGLE not in section(mu), f"match 组被误判单成员 / 或畸形 members 处理不当:\n{section(mu)}"
+assert "Traceback" not in mu, f"members 畸形时崩了:\n{mu}"
+for z in ("n", "k", "k2", "k3"):
+    assert f"{z:<14} routing=" in mu and f"routing={ 'drain' if z=='n' else 'order'}" in mu, f"{z} 组行缺失:\n{head(mu)}"
+assert mu.count("members=0 match=1") == 4, f"畸形 members 没有统一按空处理:\n{head(mu)}"
+# 假报警面：两组各自有自己的锚、只在第二位共用同一个便宜备胎 → 不是锚被挪走
+oa = run(own_anchors, "ownanchors")
+assert DRIFT not in section(oa), f"共用便宜备胎被误判成锚漂移:\n{section(oa)}"
+# 单组配置：没有可比对象 → 首位类判据必须沉默（apply 的指引也写了这个前提）
+sg = section(run(single, "single"))
+assert DRIFT not in sg and TIER_DIFF not in sg, f"只有一组却报了首位类 finding:\n{sg}"
+# 降级路径：doctor 旁边没有 validate.py → 必须明说没查，不得打 none 假装干净；
+# 也不能把解释器报错原文当校验结论打出来
+iso = tmp / "doctor_iso.py"; shutil.copy("scripts/doctor.py", iso)
+dg = run(clean, "deg", str(iso))
+deg = section(dg)
+assert "were NOT RUN (could not load validate.py)" in deg and "  none" not in deg, f"缺比较器却谎报干净:\n{deg}"
+assert "can't open file" not in dg, f"缺 validate.py 时把解释器错误当结论:\n{dg}"
+# 档位沉默：多级 `:low+high` 与 `:fast` 都不是可解析档位（validate 合法、判据不得报警）
+ts = section(run(tier_silent, "tiersilent"))
+assert "members at different effort" not in ts and TIER_DIFF not in ts, f"档位判据对多级/`:fast` 不沉默:\n{ts}"
+# 主路由不参与：否则每个网关组都会被误报
+mr = section(run(main_router, "router"))
+assert SINGLE not in mr, f"主路由被当成单成员组:\n{mr}"
+# 配对封顶：必须截断并报出未列出数（否则 600 组配置能打出一行 MB 级文本）
+cap = section(run(many, "many"))
+assert "more pairs not listed" in cap, f"漂移配对没有上限:\n{cap[:400]}"
+assert cap.count("but not in") <= 6, f"配对未截断:\n{cap[:400]}"
+# match 是字符串：按空处理，单成员判据照常报，组行不得打出字符长度
+mstr = run(match_str, "matchstr")
+assert SINGLE in section(mstr), f"字符串 match 抑制了真判据:\n{section(mstr)}"
+assert "match=" not in mstr, f"字符串 match 被打成字符数:\n{mstr[:400]}"
+# 重复 id 必须先声明
+dupsec = section(run(dup_ids, "dups"))
+assert "duplicate group ids" in dupsec, f"重复 id 没有声明，判据看起来自相矛盾:\n{dupsec}"
+# 畸形枚举值：校验器给出 FAIL，不打 traceback，也不得打 `none` 冒充体检合格
+be = run(bad_enum, "badenum")
+assert "unknown mode" in be and "Traceback" not in be, f"畸形 routing 让校验器崩了:\n{be[:500]}"
+assert "CRASHED" not in be, f"合法 FAIL 被当成校验器崩溃:\n{be[:400]}"
+# 点分模型名：fail closed（真名不得回显），但 provider 前缀与档位要留着（否则判据读不出档位）
+dt = run(dotted, "dotted")
+assert "glm-5.1.flash" not in dt, f"三段点分模型名原样回显（与 endpoint host 同形，必须掩）:\n{dt[:400]}"
+assert "acme/<model 13 chars>:high" in dt, f"遮蔽没留骨架（provider/档位），档位判据无从核对:\n{dt[:400]}"
+# 单成员判据的射程 = 除 manual 外所有模式（`smart` 是 routing 缺省值，漏掉它 = 对默认配法谎报干净）
+sm = section(run([{"id": "gx", "members": ["acme/code-standard:high"]},
+                  {"id": "gy", "routing": "order", "members": ["acme/code-standard:high", "acme/code-backup:high"]}], "smart"))
+assert SINGLE in sm, f"缺省 smart 的单成员组没被判（默认配法是最大面）:\n{sm}"
+mn = section(run([{"id": "gm", "routing": "manual", "pick": "acme/code-standard:high",
+                   "members": ["acme/code-standard:high"]}], "manual"))
+assert SINGLE not in mn, f"manual 被误报「无故障转移」（schema.md：manual 不做故障转移）:\n{mn}"
+assert "members at different effort" not in mn, f"manual 被套上「顶班重付」话术（它没有顶班）:\n{mn}"
+wt = section(run([{"id": "gw", "routing": "weight",
+                   "weights": {"acme/code-standard:high": 1, "acme/code-backup:low": 2},
+                   "members": ["acme/code-standard:high", "acme/code-backup:low"]}], "weight"))
+assert "assumes interchangeable members" in wt, f"weight 混档没点出「成员可互换」前提（usage/rotate 有）:\n{wt}"
+# 两个组都缺 id ≠ 重复 id（validate 已单独 FAIL，这里不得伪造一条重复）
+noid = section(run([{"members": ["acme/code-standard:high", "acme/code-backup:high"]},
+                    {"members": ["acme/lite-chat:low", "acme/code-backup:high"]}], "noid"))
+assert "duplicate group ids" not in noid, f"缺 id 被判成重复 id:\n{noid}"
+# 崩溃判据不得被值里的 `Traceback` 字样骗到（那是合法 FAIL，不是校验器崩）
+tb = run([{"id": "gt", "routing": "Traceback", "members": ["acme/code-standard:high", "acme/code-backup:high"]}], "tb")
+assert "CRASHED" not in tb and "not evaluated" not in tb, f"值里的 Traceback 字样被当成校验器崩溃，形状段被抹掉:\n{tb[:400]}"
+# 真崩溃必须抓到：旁边放一份运行期必崩的 validate.py 副本（正向路径，之前从没被触发过）
+crash_dir = tmp / "crashrepo"; (crash_dir / "scripts").mkdir(parents=True, exist_ok=True)
+shutil.copy("scripts/doctor.py", crash_dir / "scripts" / "doctor.py")
+vsrc = Path("scripts/validate.py").read_text()
+i = vsrc.index("\n", vsrc.index("def main("))
+(crash_dir / "scripts" / "validate.py").write_text(vsrc[:i] + "\n    raise RuntimeError('injected')\n" + vsrc[i + 1:])
+cr = run(clean, "crash", str(crash_dir / "scripts" / "doctor.py"))
+assert "the validator CRASHED" in cr and "not evaluated" in cr, f"真崩溃没被判出来:\n{cr[:400]}"
+assert "\n  none" not in cr, f"校验器崩了却打 `none`（谎报体检合格）:\n{cr[:400]}"
+# 降级路径必须明说「这行的 id/首位只是形态摘要」，否则合法组名被掩会被读成「藏了个值」
+assert "SHAPE SUMMARIES" in dg, f"降级时没声明读数已被掩:\n{dg[:300]}"
+# 档位解析要能剥 `#账号`（模式 4 的多通道写法是常态）：混档判据必须在带账号的成员上照报
+acct = section(run([{"id": "ga", "routing": "order",
+                     "members": ["acme/code-standard:high#chan-a", "acme/code-backup:low#chan-b"]}], "acct"))
+assert "members at different effort" in acct, f"带 #账号 的成员解析不出档位，档位判据静默失明:\n{acct}"
+# 漂移归因的两个分支都要走到：共享成员是【后者】的首位
+attr = section(run([{"id": "px", "routing": "order", "members": ["acme/code-standard:high", "acme/lite-chat:low"]},
+                    {"id": "py", "routing": "order", "members": ["acme/lite-chat:low", "acme/long-reader:low"]}], "attr"))
+assert "acme/lite-chat:low is first in py but not in px" in attr, f"漂移归因只走 fa 分支:\n{attr}"
+PY
+ok "doctor shape findings catch every issue and stay silent on clean, match-pooled, shared-backup, single-group and demo exceptions"
+
+# 68. magpie 事后重排的可见性：漂移要在 dry-run 里以 `members: order changed` 现形，
+#     写后输出要告诉使用者怎么复跑。主用例照现实：磁盘那份被回写换序、草案保持原序；
+#     反方向也断言一次（diff 对称），免得断言只在某一种注入方向上成立。
+#     「写完立刻读回比对顺序」那种检查恒真（读回就在自己写入之后），所以脚本里不存在它，这里也不测它。
+#     夹具密钥用明显虚构的字面量。
+python3 -I - "$TMP" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+disk = {"providers": [{"id": "acme", "models": ["code-standard", "strong-reasoner"],
+                       "key": "FAKE-injected-secret-not-a-real-key"}],
+        "groups": [{"id": "g-code", "routing": "order",
+                    "members": ["acme/code-standard:high", "acme/strong-reasoner:high"]}]}
+swapped = json.loads(json.dumps(disk))
+swapped["groups"][0]["members"] = list(reversed(swapped["groups"][0]["members"]))  # 模拟 magpie 回写后的顺序
+same = json.loads(json.dumps(disk))
+def apply(draft_groups, name, on_disk=None, write=False):
+    tgt = tmp / f"t68disk{name}.json"
+    tgt.write_text(json.dumps(on_disk or disk, ensure_ascii=False))
+    dp = tmp / f"t68draft{name}.json"
+    dp.write_text(json.dumps({"groups": draft_groups}, ensure_ascii=False))
+    cmd = [sys.executable, "-I", "scripts/apply.py", str(dp), str(tgt)] + (["--write"] if write else [])
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
+# 主用例照现实：磁盘上那份被 magpie 回写换了序，草案仍是当初写进去的顺序
+drift = apply(same["groups"], "drift", on_disk=swapped)
+assert "members: order changed" in drift, f"存量被重排却没报:\n{drift}"
+# 反方向同样要现形（diff 是对称的），否则这条断言只在某一种注入方向上有效
+drift2 = apply(swapped["groups"], "drift2")
+assert "members: order changed" in drift2, f"草案侧换序却没报:\n{drift2}"
+ident = apply(same["groups"], "same")
+assert "order changed" not in ident, f"顺序一致却误报:\n{ident}"
+# 脱敏断言要有牙：假密钥放进【会被草案替换掉的存量组】字段里——合并结果里没有它，校验照过；
+# 只放 providers 的话 apply 从不回显那一段，把脱敏代码整段删掉也照样绿（review 实测过这条假绿）。
+leak_disk = json.loads(json.dumps(disk))
+KEY = "FAKE-" + "t2Qp" * 6
+leak_disk["groups"][0]["members"] = [f"acme/code-standard:high#{KEY}", "acme/strong-reasoner:high"]
+leak_disk["groups"][0]["note"] = "keep an eye on leak.example.com"
+leak = apply(same["groups"], "leak", on_disk=leak_disk)
+for tok in (KEY, "leak.example.com"):
+    hits = [l for l in leak.splitlines() if tok in l]
+    assert not hits, f"apply 回显了 {tok!r} 形态：{len(hits)} 行\n" + "\n".join(hits)[:300]
+# diff 段实测走的是「整组降级」（secretish 命中 → 组内所有串变 `<text N chars>`），不是 shield 的
+# `#<account N chars>`（那是 doctor 与 apply 写前校验那条路径，第 51 条已分别钉住）
+assert "<text" in leak, f"diff 段的整组降级没生效（key 只被 secretish 判定挡住才算）:\n{leak[:400]}"
+# 写后指引只属于 --write：dry-run 打它会让使用者以为还没写盘就要去复跑
+assert "recheck drift later" not in ident, f"dry-run 打了写后指引:\n{ident}"
+w = apply(same["groups"], "write", write=True)
+assert "recheck drift later" in w and "post-write validation PASS" in w, w
+# 指引里那句「需要两组 order 类组才有得比」也要钉住：它是使用者唯一知道「单组配置查不出漂移」的地方
+assert "two or more such groups" in w, f"漂移指引缺「两组及以上」前提:\n{w}"
+assert "FAKE-injected-secret-not-a-real-key" not in w, "apply 输出泄漏密钥字面量"
+PY
+ok "apply surfaces post-hoc member reorder (dry-run + recheck hint), no false positive"
+
+
+# 69. 写盘失败必须干净退出：只读目标 → 无 traceback、不留孤儿备份、原文件不动
+#     （上一版在这里抛 PermissionError，且已经把 .bak-* 写进了目录）
+python3 -I - "$TMP" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+tmp = Path(sys.argv[1])
+prov = json.loads(Path("examples/demo/input.providers.json").read_text())
+prov["groups"] = [{"id": "g-legacy", "routing": "order",
+                   "members": ["acme/code-standard:high", "acme/code-backup:high"]}]
+tgt = tmp / "ro69.json"; tgt.write_text(json.dumps(prov, ensure_ascii=False))
+d = tmp / "ro69-draft.json"
+d.write_text(json.dumps({"groups": [{"id": "g-new", "routing": "order",
+                                     "members": ["acme/code-standard:high", "acme/code-backup:high"]}]}))
+tgt.chmod(0o444)
+try:
+    r = subprocess.run([sys.executable, "-I", "scripts/apply.py", str(d), str(tgt), "--write"],
+                       capture_output=True, text=True)
+finally:
+    tgt.chmod(0o644)
+out = r.stdout + r.stderr
+assert r.returncode == 1, f"只读目标写盘失败却没退 1:\n{out[:300]}"
+assert "Traceback" not in out, f"只读目标 → 抛 traceback 而不是可读 FAIL:\n{out[-400:]}"
+assert "could not write" in out, f"没有可读的失败原因:\n{out[:300]}"
+assert not list(tmp.glob("ro69.json.bak-*")), f"留下了孤儿备份: {[p.name for p in tmp.glob('ro69.json.bak-*')]}"
+assert json.loads(tgt.read_text())["groups"][0]["id"] == "g-legacy", "原文件被动过"
+PY
+ok "apply exits cleanly when the write itself fails (read-only target): no traceback, no orphan backup"
 
 echo "E2E PASS: ${CHECKS} checks"

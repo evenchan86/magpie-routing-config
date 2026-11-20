@@ -55,7 +55,7 @@ agent（编码助手）
 
 - 规则 `compact:true` = **压缩触发条件**：Agent 压缩上下文时命中，把总结流量导给便宜/长上下文模型。
 - 组级 `compact:<number>` = 压缩阈值（token 数）。
-- **默认兜底** = 未命中任何规则时按组的 **routing 模式**路由（`order` 才是首成员优先；`usage` 按剩余额度分摊、`weight` 按权重等），不需要任何字段。
+- **默认兜底** = 未命中任何规则时按组的 **routing 模式**路由（`order`/`drain` 按成员顺序、首成员先用；`usage` 按剩余额度分摊、`weight` 按权重、`rotate` 逐条轮转），不需要任何字段。
 
 因此**不强制** `compact:true`；工具要求每组 **`members` 或 `match` 至少一个非空**（`hidden:true` 墓碑豁免）。「把默认模型放成员首位」仅对 order 类模式成立，对 usage 子组（如 g-test/g-light）不成立。
 

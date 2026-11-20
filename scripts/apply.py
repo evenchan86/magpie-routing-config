@@ -22,8 +22,9 @@ VALIDATE = Path(__file__).resolve().parent / "validate.py"
 _spec = importlib.util.spec_from_file_location("magpie_validate", VALIDATE)
 _validate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_validate)
-# endpoint 不在 validate 的密钥形态里，但同样承诺不回显
-ENDPOINT = re.compile(r"(?i)(?:https?|wss?)://|[\w.-]+\.[a-z]{2,}:\d{2,5}")
+# endpoint 不在 validate 的密钥形态常量里，但同样承诺不回显。
+# 形态表放在 validate（单真源）：doctor 的输出面要用同一套判据，抄第二份就会漂。
+ENDPOINT = _validate.ENDPOINT_SHAPE
 
 
 def secretish(v):
@@ -95,7 +96,9 @@ def check_ids(groups, label):
         if not isinstance(gid, str) or not gid:
             return f"{label} groups[{i}] needs a non-empty string id"
         if gid in seen:
-            return f"{label} groups[{i}] duplicates group id {gid!r} (upsert would silently drop one)"
+            # 组 id 是用户可控串：报错信息里也要过 shield（有人把凭据贴进 id 时，这条会先于校验打出来）
+            return (f"{label} groups[{i}] duplicates group id {_validate.shield(gid)!r}"
+                    " (upsert would silently drop one)")
         seen.add(gid)
     return None
 
@@ -337,8 +340,14 @@ def main():
     # 3. --write：备份（保留原权限）→ 写入 → 读回磁盘校验，失败自动恢复
     original = target_path.read_text()
     backup = backup_path(target_path)
-    backup.write_text(original)
-    os.chmod(backup, stat.S_IMODE(target_path.stat().st_mode))
+    try:
+        backup.write_text(original)
+        os.chmod(backup, stat.S_IMODE(target_path.stat().st_mode))
+    except OSError as exc:
+        # 备份都建不出来 → 什么都没改，直接干净退出（别把 traceback 当结论）
+        print(f"FAIL: cannot create the backup next to {target_path}: {exc}")
+        print("nothing was written; fix the file/directory permissions and re-run.")
+        return 1
 
     def restore(reason):
         target_path.write_text(original)
@@ -346,7 +355,17 @@ def main():
         print(f"restored the original config from the backup; backup kept at: {backup}")
         return 1
 
-    target_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    try:
+        target_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    except OSError as exc:
+        # 写失败：文件没动过，本次新建的备份就是孤儿——删掉它，别在使用者目录里留一堆 .bak-*
+        try:
+            backup.unlink()
+        except OSError:
+            pass
+        print(f"FAIL: could not write {target_path}: {exc}")
+        print("nothing was written and no backup was kept; the original config is untouched.")
+        return 1
     print(f"backup: {backup}")
     try:
         on_disk = json.loads(target_path.read_text())
@@ -360,6 +379,16 @@ def main():
         return restore("post-write validation of the on-disk config FAILED")
     print(f"OK: merged {len(merged)} group(s); post-write validation PASS")
     print("next: point your agent at group/auto in magpie, send a test request, and check the log (see doctor.py).")
+    # magpie 曾被观测到在之后的回写里重排 members（本机一次观测，触发规则未知，见 docs/patterns.md 坑 3）。
+    # 刚写完的读回几乎总是等于草案（只有 magpie 恰好在写入窗口内插一手才会不同，本机没观测到）——
+    # 那种断言查不到漂移，所以不做。漂移要这样查：稍后用同一份草案再跑一次 dry-run。
+    print("recheck drift later: run this same draft again WITHOUT --write; a reorder shows up as"
+          " 'members: order changed'. doctor.py's `shape findings:` section can also flag order-like"
+          " groups (order/drain) that share the same member (model and tier) but start with different"
+          " ones — that check reads"
+          " only what's on disk, so it still works after magpie rewrote the file (it cannot tell drift"
+          " from a deliberate non-anchored group). It needs two or more such groups: with a single"
+          " order-like group there is nothing to compare against, and drift there is invisible.")
     return 0
 
 

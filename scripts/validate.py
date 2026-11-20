@@ -76,6 +76,61 @@ def base_model(ref):
     return ref
 
 
+# endpoint 形态分两条，因为它们在 `shield` 里的豁免不同：
+#   scheme / host:port —— 出现即可疑，任何位置都掩掉。
+#   三段以上点分域名（`api.invalid.example`）—— 只在【不是模型名段】的位置掩掉。
+# 刻意不匹配【只含一个点】的串：模型名里带点很常见（版本号式写法），掩掉会让回显看不懂。
+_SCHEME_PORT_SRC = r"(?:https?|wss?)://|[\w.-]+\.[a-z]{2,}:\d{2,5}"
+_DOMAIN3_SRC = r"[\w-]+(?:\.[\w-]+){2,}"
+ENDPOINT_SHAPE = re.compile(f"(?i)(?:{_SCHEME_PORT_SRC}|{_DOMAIN3_SRC})")   # 深度自查用（apply）
+_SCHEME_PORT = re.compile(f"(?i){_SCHEME_PORT_SRC}")
+_DOMAIN3 = re.compile(_DOMAIN3_SRC)
+
+
+def _redact_model(s):
+    """三段点分域名落在 `provider/model` 的 model 段时**照样掩**：`acme/glm-5.1.flash` 与
+    `acme/api.internal.example` 形态完全同形，任何只看落盘的规则都分不出——只能 fail closed。
+    （曾按「model 段豁免」放过真实点分模型名，e2e 第 51 条随即把 `acme/<endpoint host>` 放过去。）
+    代价用「保留骨架」抵掉一半：provider 前缀与尾部已知档位照打（`MEMBER_EFFORT` 里的词不是凭据，
+    而漂移/档位判据必须读得到档位），只掩 model 段本体。"""
+    head, sep, tail = s.rpartition("/")
+    if not sep:
+        return f"<ref {len(s)} chars>"
+    suf = ""
+    if ":" in tail:
+        base, _, effort = tail.rpartition(":")
+        if effort in MEMBER_EFFORT:
+            suf, tail = f":{effort}", base
+    return f"{head}{sep}<model {len(tail)} chars>{suf}"
+
+
+def q(value):
+    """报错里回显一个用户可控串的**唯一写法**：`{q(x)}`，不是 `{x!r}`。
+    整条消息不过 shield（那会把判据本身吞掉），但每一个插进去的组 id / 成员引用 /
+    字段名 / 权重键 / classifier 模型都要单独过 `shield()`：它们都可能就是凭据或 endpoint
+    形态，而校验失败时这三条脚本都会把报错原样打进 stdout/stderr。"""
+    return f"'{shield(value)}'"
+
+
+def shield(ref):
+    """把可能夹带凭据的引用换成形态摘要——**单真源**，validate/apply/doctor 三个输出面共用。
+    报错信息、组 id、首位成员都要过它：模型引用本身可回显，但成员串里可能带 `#账号`，
+    组 id / note 里可能被人贴进 endpoint 或 key。`#` 之后单独遮蔽，前半（模型引用）保留可读。
+    判据按【形态】而不是「看起来像不像密钥」：宁可不显示，不可把凭据打进上下文。
+    三种输出形态：`<ref N chars>`（整串可疑）、`provider/<model N chars>[:档位]`（model 段含点分域名）、
+    `模型引用#<account N chars>`（只有账号部分可疑）。"""
+    s = str(ref)
+    if "#" in s:
+        head, _, acct = s.partition("#")
+        if acct and (SECRET_VALUE.search(acct) or ENDPOINT_SHAPE.search(acct)):
+            return f"{shield(head)}#<account {len(acct)} chars>"
+    if SECRET_VALUE.search(s) or _SCHEME_PORT.search(s):
+        return f"<ref {len(s)} chars>"
+    if _DOMAIN3.search(s):
+        return _redact_model(s)
+    return s
+
+
 def check_value(value, path, errors):
     if isinstance(value, str):
         if "<role:" in value:
@@ -120,16 +175,16 @@ def main():
         if is_group_ref(ref) or is_pattern(ref):
             return
         if known is not None and base_model(ref) not in known:
-            fail(errors, f"{path}: unknown model ref {ref!r}")
+            fail(errors, f"{path}: unknown model ref {q(ref)}")
 
     if not isinstance(doc, dict):
         print("FAIL: top level must be an object with a groups list")
         return 1
     for key in doc:
         if key not in TOP_FIELDS:
-            fail(errors, f"top-level: unknown field {key!r} (only groups allowed; providers must not appear)")
+            fail(errors, f"top-level: unknown field {q(key)} (only groups allowed; providers must not appear)")
         if SECRET_FIELD.search(key):
-            fail(errors, f"top-level: secret-like field {key!r}")
+            fail(errors, f"top-level: secret-like field {q(key)}")
 
     groups = doc.get("groups")
     if not isinstance(groups, list) or not groups:
@@ -147,18 +202,18 @@ def main():
             continue
         for key in group:
             if key in GROUP_CLI_ONLY:
-                fail(errors, f"{gp}: {key!r} is a CLI flag, not a JSON field"
-                             f" (use {GROUP_CLI_ONLY[key]!r}; magpie silently ignores {key!r})")
+                fail(errors, f"{gp}: {q(key)} is a CLI flag, not a JSON field"
+                             f" (use {GROUP_CLI_ONLY[key]!r}; magpie silently ignores {q(key)})")
             elif key not in GROUP_FIELDS:
-                fail(errors, f"{gp}: unknown field {key!r}")
+                fail(errors, f"{gp}: unknown field {q(key)}")
             if SECRET_FIELD.search(key):
-                fail(errors, f"{gp}: secret-like field {key!r}")
+                fail(errors, f"{gp}: secret-like field {q(key)}")
         gid = group.get("id")
         if not isinstance(gid, str) or not gid:
             fail(errors, f"{gp}.id: required non-empty string")
             gid = f"<invalid-{gi}>"
         elif gid in seen_ids:
-            fail(errors, f"{gp}: duplicate group id {gid!r}")
+            fail(errors, f"{gp}: duplicate group id {q(gid)}")
         seen_ids.add(gid)
         nest_adj.setdefault(gid, set())
         all_refs.setdefault(gid, set())
@@ -168,12 +223,12 @@ def main():
         for fld in ("name", "note", "family"):
             if fld in group and not isinstance(group[fld], str):
                 fail(errors, f"{gp}.{fld}: must be string")
-        if "routing" in group and group["routing"] not in ROUTING_MODES:
-            fail(errors, f"{gp}.routing: unknown mode {group['routing']!r}")
-        if "affinity" in group and group["affinity"] not in AFFINITY:
-            fail(errors, f"{gp}.affinity: unknown value {group['affinity']!r} (CLI stays=)")
+        if "routing" in group and (not isinstance(group["routing"], str) or group["routing"] not in ROUTING_MODES):
+            fail(errors, f"{gp}.routing: unknown mode {q(group['routing'])}")
+        if "affinity" in group and (not isinstance(group["affinity"], str) or group["affinity"] not in AFFINITY):
+            fail(errors, f"{gp}.affinity: unknown value {q(group['affinity'])} (CLI stays=)")
         if "effort" in group:
-            if group["effort"] not in GROUP_EFFORT:
+            if not isinstance(group["effort"], str) or group["effort"] not in GROUP_EFFORT:
                 fail(errors, f"{gp}.effort: only auto|agent allowed")
             elif group["effort"] == "auto" and "classifier" not in group:
                 fail(errors, f"{gp}.effort=auto requires a classifier")
@@ -222,7 +277,7 @@ def main():
             if has_pattern:
                 check_ref(ref, path, errors)
             elif not isinstance(ref, str) or ref not in member_refs:
-                fail(errors, f"{path}: {ref!r} is not a member of this group"
+                fail(errors, f"{path}: {q(ref)} is not a member of this group"
                              " (use the full member ref incl. :effort; magpie ignores others)")
 
         if "weights" in group:
@@ -231,9 +286,9 @@ def main():
                 fail(errors, f"{gp}.weights: must be an object mapping member ref -> integer 1..1000")
             else:
                 for k, v in w.items():
-                    check_member_ref(k, f"{gp}.weights key {k!r}")
+                    check_member_ref(k, f"{gp}.weights key {q(k)}")
                     if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 1000:
-                        fail(errors, f"{gp}.weights[{k!r}]: must be an integer 1..1000"
+                        fail(errors, f"{gp}.weights[{q(k)}]: must be an integer 1..1000"
                                      " (magpie reads out-of-range values, but every later"
                                      " `group set` on this group is refused until fixed)")
         if "pick" in group:
@@ -278,12 +333,12 @@ def main():
                 r = ref[len("group/"):]
                 all_refs[gid].add(r)
                 if r not in member_groups:
-                    fail(errors, f"{path}: {ref!r} is not a member of group {gid!r} (use/more must be members)")
+                    fail(errors, f"{path}: {q(ref)} is not a member of group {q(gid)} (use/more must be members)")
             elif isinstance(ref, str) and not is_pattern(ref):
                 bm = base_model(ref)
                 rule_models.add(bm)
                 if not has_pattern and bm not in member_models:
-                    fail(errors, f"{path}: {ref!r} is not a member of group {gid!r} (use/more must be members)")
+                    fail(errors, f"{path}: {q(ref)} is not a member of group {q(gid)} (use/more must be members)")
 
         for ri, rule in enumerate(rules):
             rp = f"{gp}.rules[{ri}]"
@@ -292,9 +347,9 @@ def main():
                 continue
             for key in rule:
                 if key not in RULE_FIELDS:
-                    fail(errors, f"{rp}: unknown field {key!r}")
+                    fail(errors, f"{rp}: unknown field {q(key)}")
                 if SECRET_FIELD.search(key):
-                    fail(errors, f"{rp}: secret-like field {key!r}")
+                    fail(errors, f"{rp}: secret-like field {q(key)}")
             if "use" not in rule:
                 fail(errors, f"{rp}: use is required (pause rules also carry use=<model> + pause:true)")
             else:
@@ -305,10 +360,10 @@ def main():
                 else:
                     for mi, ref in enumerate(rule["more"]):
                         check_target(ref, f"{rp}.more[{mi}]")
-            if "effort" in rule and rule["effort"] not in RULE_EFFORT:
+            if "effort" in rule and (not isinstance(rule["effort"], str) or rule["effort"] not in RULE_EFFORT):
                 fail(errors, f"{rp}.effort: must be on or an effort level")
-            if "useEffort" in rule and rule["useEffort"] not in USE_EFFORT:
-                fail(errors, f"{rp}.useEffort: unknown level {rule['useEffort']!r}")
+            if "useEffort" in rule and (not isinstance(rule["useEffort"], str) or rule["useEffort"] not in USE_EFFORT):
+                fail(errors, f"{rp}.useEffort: unknown level {q(rule['useEffort'])}")
             if "compact" in rule and rule["compact"] is not True:
                 fail(errors, f"{rp}.compact: only true allowed (compaction trigger)")
             if "pause" in rule and rule["pause"] is not True:
@@ -351,7 +406,7 @@ def main():
     for gid, refs in all_refs.items():
         for ref in refs:
             if ref not in seen_ids:
-                fail(errors, f"group {gid!r}: references unknown group {ref!r}")
+                fail(errors, f"group {q(gid)}: references unknown group {q(ref)}")
 
     # classifier 分离守卫（跨组）：意图判断模型绝不进【任何】路由组的成员/规则目标。
     # classifier 为组时，解析其成员模型；该 classifier 池自身的成员豁免（它们就是分类器）。
@@ -380,7 +435,7 @@ def main():
             continue
         for m in sorted(dat["member_models"] | dat["rule_models"]):
             if m in classifier_models:
-                fail(errors, f"group {gid!r}: {m!r} is a classifier model; classifier must only judge intent, never a routing member/target")
+                fail(errors, f"group {q(gid)}: {q(m)} is a classifier model; classifier must only judge intent, never a routing member/target")
 
     # 禁自包含（嵌套图环检测）+ 深度 ≤8（有环则跳过深度，避免递归崩溃）
     WHITE, GRAY, BLACK = 0, 1, 2
@@ -395,7 +450,7 @@ def main():
                 continue
             if color[nxt] == GRAY:
                 has_cycle = True
-                fail(errors, f"group nesting cycle (self-inclusion): {' -> '.join(stack + [nxt])}")
+                fail(errors, f"group nesting cycle (self-inclusion): {' -> '.join(shield(x) for x in stack + [nxt])}")
             elif color[nxt] == WHITE:
                 dfs(nxt, stack + [nxt])
         color[gid] = BLACK
@@ -420,7 +475,7 @@ def main():
         for gid in nest_adj:
             d = depth(gid)
             if d > MAX_DEPTH:
-                fail(errors, f"group {gid!r}: nesting depth {d} exceeds {MAX_DEPTH}")
+                fail(errors, f"group {q(gid)}: nesting depth {d} exceeds {MAX_DEPTH}")
 
     check_value(doc, "$", errors)
     if errors:

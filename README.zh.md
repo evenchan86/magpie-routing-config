@@ -72,7 +72,9 @@ scripts/
   render.py                # 把角色→模型列表映射展开进模板（多模型子组）
   validate.py              # 路由层草案校验器（组引用、classifier 分离）
   apply.py                 # 草案按 id upsert 合并进本机配置（默认 dry-run，展示被替换组的组内字段级变化、不回显凭据；--write 先备份、写后读回校验、失败自动恢复）
-  doctor.py                # 只读诊断现有配置（+ 接线冒烟步骤，含 CLI 写操作）
+  docgate.py               # 文档/代码漂移闸：改了公开面却没改文档就失败
+  commit-gate.py           # 贡献者与 git hook 跑的提交闸（查文档同步；--docs-only 不查 review 档案）
+  doctor.py                # 只读诊断现有配置（+ schema 合法但吃亏或不结实的形状提示，+ 接线冒烟步骤，含 CLI 写操作）
   e2e.sh                   # 隔离验收
 ```
 
