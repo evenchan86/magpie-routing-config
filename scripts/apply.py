@@ -718,7 +718,14 @@ def main():
                 os.chmod(tmp_name, stat.S_IMODE(real.stat().st_mode))
             os.replace(tmp_name, str(real))
         except BaseException:
-            Path(tmp_name).unlink(missing_ok=True)   # 残片不留：配置目录里躺半份 JSON 同样是垃圾
+            # 残片不留：配置目录里躺半份 JSON 同样是垃圾。
+            # `unlink(missing_ok=True)` 是 3.8+ 的 API：3.7 上这里会甩 TypeError 盖掉真正的错因，
+            # 读者拿到的是「unlink 报了个参数错」而不是「写盘失败」——自己接 FileNotFoundError
+            # （语义与 missing_ok 相同）。
+            try:
+                Path(tmp_name).unlink()
+            except FileNotFoundError:
+                pass
             raise
     except (OSError, ValueError) as exc:
         # 原子落盘之后这条分支基本只剩「临时文件根本没写出去 / replace 没成」，目标通常原样未动。

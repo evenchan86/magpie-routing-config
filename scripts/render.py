@@ -304,7 +304,14 @@ def main():
                     os.chmod(tmp_name, stat.S_IMODE(real.stat().st_mode))
                 os.replace(tmp_name, str(real))
             except BaseException:
-                Path(tmp_name).unlink(missing_ok=True)   # 残片不留：目录里那个半份文件同样是垃圾
+                # 残片不留：目录里那个半份文件同样是垃圾。
+                # `unlink(missing_ok=True)` 是 3.8+ 的 API：3.7 上这里会甩 TypeError 盖掉真正的错因，
+                # 读者拿到的是「unlink 报了个参数错」而不是「写盘失败」——自己接 FileNotFoundError
+                # （语义与 missing_ok 相同）。
+                try:
+                    Path(tmp_name).unlink()
+                except FileNotFoundError:
+                    pass
                 raise
         except OSError as exc:
             print(f"FAIL: could not write {sys.argv[3]}: {exc}")

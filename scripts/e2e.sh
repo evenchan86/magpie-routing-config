@@ -8,6 +8,18 @@ trap 'rm -rf "$TMP"' EXIT
 CHECKS=0
 ok() { CHECKS=$((CHECKS+1)); echo "ok ${CHECKS} - $1"; }
 
+# 0. Python 版本前置检查。套件里有一个夹具要编码 1000 层嵌套的 JSON 值，低于 3.12 的 CPython
+#    会在 json 里抛 RecursionError——那时读者拿到的是一段栈，看不出是自己的 python 太老。
+#    先说人话再跑。这一步不是一条验收用例（不满足就直接退出，不计入 CHECKS）。
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'; then
+  {
+    echo "FAIL: the acceptance suite needs Python 3.12 or newer; the python3 on PATH is $(python3 -V 2>&1)."
+    echo "      one fixture encodes a 1000-level nested JSON value; older CPython raises RecursionError inside json."
+    echo "      the scripts themselves run on Python 3.7+; only this suite needs 3.12+."
+  } >&2
+  exit 1
+fi
+
 # 1. 假 HOME 夹具（虚构 acme 供应商）
 FAKE_HOME="$TMP/home"
 mkdir -p "$FAKE_HOME/.config/magpie"
